@@ -56,37 +56,37 @@ try to use it. Reload the structure from a `.cif` file to proceed.
 
 ## Installation
 
-### From source (command line)
+### From source (ChimeraX command line)
 
-Build and install from a clone of this repository without launching the
-ChimeraX GUI:
-
-```bash
-ChimeraX --nogui --exit --cmd 'devel install . exit true'
-```
-
-`devel install` builds the wheel if necessary and installs it into the
-running ChimeraX profile. `exit true` makes ChimeraX quit as soon as the
-install finishes; the leading `--exit` guarantees exit even on failure
-(see `help devel` inside ChimeraX for the full command reference).
-
-On macOS the `ChimeraX` launcher lives at
-`/Applications/ChimeraX-<version>.app/Contents/bin/ChimeraX`; add it to
-your `$PATH` or invoke it directly.
-
-### From source (inside ChimeraX)
-
-From the ChimeraX command line:
+Clone the repository, then from the ChimeraX command line (the input
+field at the bottom of the ChimeraX GUI) run:
 
 ```
 devel install /path/to/ChimeraX-SwapAsym
 ```
 
-### From a pre-built wheel
+`devel install` builds the wheel if necessary and installs the bundle
+into the running ChimeraX profile. See `help devel` inside ChimeraX for
+the full command reference.
+
+### From a pre-built wheel (ChimeraX command line)
+
+```
+toolshed install /path/to/ChimeraX_SwapAsym-0.1.0-py3-none-any.whl
+```
+
+### From the shell (headless)
+
+Run the same ChimeraX commands without launching the GUI:
 
 ```bash
-ChimeraX --nogui --exit --cmd 'toolshed install dist/ChimeraX_SwapAsym-0.1.0-py3-none-any.whl'
+ChimeraX --nogui --exit --cmd 'devel install . exit true'
 ```
+
+The leading `--exit` guarantees ChimeraX quits even if the install
+fails; the trailing `exit true` quits immediately on success. On macOS
+the launcher lives at
+`/Applications/ChimeraX-<version>.app/Contents/bin/ChimeraX`.
 
 ### Using echidna (optional helper)
 
@@ -101,13 +101,11 @@ echi run --script scripts/smoke.cxc
 
 ## Development
 
-```bash
-# Run the pytest suite (no ChimeraX runtime needed)
-uv run --no-project --with pytest pytest tests/
+Run the pytest suite (no ChimeraX runtime required; `chimerax.*`
+imports are stubbed in `tests/conftest.py`):
 
-# Rebuild + reinstall + run smoke script
-ChimeraX --nogui --exit --cmd 'devel install . exit true' \
-  && ChimeraX scripts/smoke.cxc
+```bash
+uv run --no-project --with pytest pytest tests/
 ```
 
 ### Tests
