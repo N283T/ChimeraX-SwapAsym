@@ -50,6 +50,15 @@ select /E,F,G,H,I,J   # select all HEM / PO4 via standard atom-spec
 swapasym              # back to 4 chains A B C D
 ```
 
+Coloring 4HHB with `color bychain` makes the effect of `swapasym` obvious.
+Before swap, every HEM / PO4 / water residue inherits the color of its
+host author chain (4 colors total). After swap, the ligands and waters
+carry their mmCIF `label_asym_id` values, so each gets its own color.
+
+| Before `swapasym` (auth, 4 chains) | After `swapasym` (label, 14 chains) |
+|:---:|:---:|
+| ![4hhb colored bychain, auth side](docs/images/4hhb_auth_bychain.png) | ![4hhb colored bychain, label side](docs/images/4hhb_label_bychain.png) |
+
 Structures that were not loaded from mmCIF (plain `.pdb` files) have no
 `mmcif_chain_id` information, so `swapasym` raises a UserError when you
 try to use it. Reload the structure from a `.cif` file to proceed.
