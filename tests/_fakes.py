@@ -29,9 +29,11 @@ class FakeResidue:
         mmcif_chain_id: str = "",
         *,
         polymer: bool = False,
+        name: str = "UNK",
     ):
         self.chain_id = chain_id
         self.mmcif_chain_id = mmcif_chain_id
+        self.name = name
         self._polymer = polymer
         self.chain: Optional["FakeChain"] = None
 

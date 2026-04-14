@@ -130,21 +130,65 @@ def test_warns_when_residues_skipped_due_to_empty_label():
     assert "1 residues" in warnings or "1 residue" in warnings
 
 
-def test_info_log_format():
-    """Success log must include the current-mode, target-mode, and the
-    before/after chain counts — users need the delta to know the swap
-    actually restructured chain membership."""
+def test_info_log_format_shows_polymer_and_residue_level_counts():
+    """Success log must include mode transition, residue change ratio, the
+    polymer chain count delta, and the residue-level unique chain_id delta
+    — users need all three to understand what the swap did."""
     session, _ = _session_with([("A", "A"), ("A", "E"), ("A", "F"), ("B", "B")])
 
     cmd.swapasym(session, mode="label")
 
     info = " ".join(session.logger.info_msgs)
     assert "auth -> label" in info
-    assert "residues changed" in info
-    # Format: "... (X -> Y chains)" regardless of the actual numbers.
-    import re
+    assert "residues:" in info and "changed" in info
+    assert "polymer chains:" in info
+    assert "unique chain_ids:" in info
 
-    assert re.search(r"\d+ -> \d+ chains", info), info
+
+def test_info_log_lists_added_chain_ids_with_residue_types():
+    """When swapping to label, newly-appearing chain_ids should be listed
+    in the log with the residue-type annotation (e.g. 'E [HEM]')."""
+    # Polymer chain A=A; one ligand residue in A with label E.
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),  # ligand; becomes E on label side
+    ]
+    residues[2].name = "HEM"
+    residues[0].name = "VAL"
+    residues[1].name = "ALA"
+    structure = FakeStructure(residues)
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    info = " ".join(session.logger.info_msgs)
+    assert "added:" in info
+    assert "E [HEM]" in info
+
+
+def test_info_log_lists_removed_chain_ids_when_swapping_back_to_auth():
+    """Reverse swap: the label-only ids should appear under 'removed'."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    residues[0].name = "VAL"
+    residues[1].name = "HEM"
+    structure = FakeStructure(residues)
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")  # auth -> label
+    session.logger.info_msgs.clear()
+    cmd.swapasym(session, mode="auth")  # label -> auth
+
+    info = " ".join(session.logger.info_msgs)
+    assert "removed:" in info
+    assert "E [HEM]" in info
 
 
 def test_multi_structure_all_processed():

@@ -270,6 +270,36 @@ def _current_mode(structure):
     return "mixed"
 
 
+def _summarize_chain_ids(structure):
+    """Map each unique chain_id to {"names": set(residue names), "polymer": bool}.
+
+    Uses the residue-level ``chain_id`` (what the user actually sees in
+    atom-specs), not ``structure.chains`` which only counts polymer chains.
+    """
+    info: dict = {}
+    for residue in structure.residues:
+        cid = residue.chain_id
+        entry = info.setdefault(cid, {"names": set(), "polymer": False})
+        entry["names"].add(residue.name)
+        if residue.chain is not None:
+            entry["polymer"] = True
+    return info
+
+
+def _describe_chain_ids(summary, cids):
+    """Render 'D [HEM], E [HOH], F [NAG, MAN]' style list for the given ids."""
+    parts = []
+    for cid in sorted(cids):
+        names = sorted(summary.get(cid, {}).get("names", set()))
+        if len(names) == 1:
+            parts.append(f"{cid} [{names[0]}]")
+        elif len(names) <= 3:
+            parts.append(f"{cid} [{', '.join(names)}]")
+        else:
+            parts.append(f"{cid} [{len(names)} residue types]")
+    return ", ".join(parts)
+
+
 def _apply_side(structure, target_attr):
     """Rewrite chain_id of every residue from the given custom attribute.
 
@@ -366,7 +396,9 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"swapasym: {exc} Reload from a .cif file to use swapasym."
             ) from exc
         current = _current_mode(structure)
-        num_chains_before = structure.num_chains
+        num_polymer_before = structure.num_chains
+        before_summary = _summarize_chain_ids(structure)
+        before_ids = set(before_summary)
 
         if current == "identical":
             session.logger.warning(
@@ -384,11 +416,26 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"empty {target_attr} (left on previous side)."
             )
 
-        session.logger.info(
-            f"swapasym: {structure} {current} -> {target} "
-            f"({changed}/{len(structure.residues)} residues changed, "
-            f"{num_chains_before} -> {structure.num_chains} chains)"
+        after_summary = _summarize_chain_ids(structure)
+        after_ids = set(after_summary)
+        added = after_ids - before_ids
+        removed = before_ids - after_ids
+        total_residues = len(structure.residues)
+
+        lines = [f"swapasym: {structure} {current} -> {target}"]
+        tail = f"residues: {changed}/{total_residues} changed"
+        if skipped:
+            tail += f", {skipped} skipped"
+        lines.append(f"  {tail}")
+        lines.append(
+            f"  polymer chains:   {num_polymer_before} -> {structure.num_chains}"
         )
+        lines.append(f"  unique chain_ids: {len(before_ids)} -> {len(after_ids)}")
+        if added:
+            lines.append(f"    added:   {_describe_chain_ids(after_summary, added)}")
+        if removed:
+            lines.append(f"    removed: {_describe_chain_ids(before_summary, removed)}")
+        session.logger.info("\n".join(lines))
 
     if color and targets:
         spec = " ".join(s.atomspec for s in targets)
