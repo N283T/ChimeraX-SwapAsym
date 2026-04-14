@@ -146,32 +146,10 @@ def test_info_log_is_html_table_with_summary_rows():
     assert "unique chain_ids" in html
 
 
-def test_info_log_added_table_has_type_column_and_cxcmd_link():
-    """When swapping to label, newly-appearing chain_ids should appear in
-    a second HTML table row tagged 'added', with a residue-type cell and
-    a clickable ``cxcmd:select`` link for the chain id."""
-    from _fakes import FakeResidue, FakeStructure
-
-    residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "A", polymer=True, name="ALA"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
-    ]
-    structure = FakeStructure(residues, atomspec="#1")
-    session = FakeSession(models=[structure])
-
-    cmd.swapasym(session, mode="label")
-
-    html = session.logger.html_info_msgs[0]
-    assert "added" in html
-    assert ">HEM<" in html  # residue-type cell
-    assert 'href="cxcmd:select #1/E"' in html
-
-
-def test_info_log_has_mapping_table():
-    """Every swap should include a before/after mapping table rooted at
-    auth_asym_id so the user can see which label ids a given auth chain
-    redistributes to."""
+def test_info_log_mapping_table_auth_to_label_direction():
+    """Swapping to the label side yields a mapping table with columns
+    ``auth_asym_id | label_asym_id`` and a row per source auth chain
+    listing each label chain id it redistributes into."""
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
@@ -186,49 +164,18 @@ def test_info_log_has_mapping_table():
     cmd.swapasym(session, mode="label")
 
     html = session.logger.html_info_msgs[0]
-    assert "auth_asym_id" in html and "label_asym_id" in html
-    # Row grouped under auth A should mention both label A (polymer) and E (HEM)
-    assert "A" in html and "E" in html
-    # Row grouped under auth B should mention label B and F (HOH)
-    assert "F" in html
+    # Header order follows the swap direction.
+    assert html.index("auth_asym_id") < html.index("label_asym_id")
+    # Source column uses the custom-attr selector (works on either side).
+    assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
+    # Target column uses the current atomspec (chain_id == label now).
+    assert "cxcmd:select #1/E" in html
+    assert "cxcmd:select #1/F" in html
 
 
-def test_info_log_entity_description_in_details(monkeypatch):
-    """When mmCIF struct_asym/entity tables are available, the details
-    cell must include the entity description in italics."""
-    import sys
-    from unittest.mock import MagicMock
-
+def test_info_log_mapping_table_label_to_auth_direction():
+    """Reverse swap inverts the column order to ``label_asym_id | auth_asym_id``."""
     from _fakes import FakeResidue, FakeStructure
-
-    # Build a fake chimerax.mmcif module that hands out mapping tables.
-    class _FakeTable:
-        def __init__(self, data):
-            self.data = data
-
-        def mapping(self, key_col, val_col):
-            return dict(self.data[(key_col, val_col)])
-
-    struct_asym = _FakeTable({("id", "entity_id"): [("A", "1"), ("E", "2")]})
-    entity = _FakeTable(
-        {
-            ("id", "pdbx_description"): [("1", "Globin alpha"), ("2", "HEME")],
-            ("id", "type"): [("1", "polymer"), ("2", "non-polymer")],
-        }
-    )
-
-    def _fake_get(structure, names):
-        # The bundle now asks for tables one at a time; return the
-        # corresponding single-element tuple.
-        if names == ["struct_asym"]:
-            return (struct_asym,)
-        if names == ["entity"]:
-            return (entity,)
-        return tuple(None for _ in names)
-
-    fake_mmcif = MagicMock()
-    fake_mmcif.get_mmcif_tables_from_metadata = _fake_get
-    monkeypatch.setitem(sys.modules, "chimerax.mmcif", fake_mmcif)
 
     residues = [
         FakeResidue("A", "A", polymer=True, name="VAL"),
@@ -238,35 +185,28 @@ def test_info_log_entity_description_in_details(monkeypatch):
     session = FakeSession(models=[structure])
 
     cmd.swapasym(session, mode="label")
-
-    html = session.logger.html_info_msgs[0]
-    # Details cell carries the entity description in <i>.
-    assert "<i>HEME</i>" in html
-    assert "<i>Globin alpha</i>" in html
-
-
-def test_info_log_removed_row_when_swapping_back_to_auth():
-    """Reverse swap: the label-only ids should appear in a 'removed' row
-    (without a cxcmd link, since the id no longer exists post-swap)."""
-    from _fakes import FakeResidue, FakeStructure
-
-    residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
-    ]
-    structure = FakeStructure(residues, atomspec="#1")
-    session = FakeSession(models=[structure])
-
-    cmd.swapasym(session, mode="label")  # auth -> label
     session.logger.html_info_msgs.clear()
     session.logger.info_msgs.clear()
     cmd.swapasym(session, mode="auth")  # label -> auth
 
     html = session.logger.html_info_msgs[0]
-    assert "removed" in html
-    assert ">HEM<" in html
-    # Removed chain_ids are no longer present on the current side, so no link.
-    assert 'href="cxcmd:select #1/E"' not in html
+    assert html.index("label_asym_id") < html.index("auth_asym_id")
+    # Source is now label; link uses the label custom-attr selector.
+    assert "cxcmd:select ::label_asym_id=&#39;E&#39;" in html
+    # Target is auth; chain_id is back to auth, so the standard spec works.
+    assert "cxcmd:select #1/A" in html
+
+
+def test_info_log_has_no_added_removed_tables():
+    """After simplification, only the summary + mapping tables remain."""
+    session, _ = _session_with([("A", "A"), ("A", "E")])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    assert "added" not in html
+    assert "removed" not in html
+    assert "details" not in html
 
 
 def test_multi_structure_all_processed():
