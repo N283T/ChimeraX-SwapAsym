@@ -114,9 +114,12 @@ class FakeLogger:
     def __init__(self):
         self.info_msgs: list[str] = []
         self.warning_msgs: list[str] = []
+        self.html_info_msgs: list[str] = []
 
-    def info(self, msg: str) -> None:
+    def info(self, msg: str, is_html: bool = False) -> None:
         self.info_msgs.append(msg)
+        if is_html:
+            self.html_info_msgs.append(msg)
 
     def warning(self, msg: str) -> None:
         self.warning_msgs.append(msg)

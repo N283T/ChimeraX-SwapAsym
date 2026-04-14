@@ -270,6 +270,147 @@ def _current_mode(structure):
     return "mixed"
 
 
+def _build_mapping_rows(structure):
+    """Group residues by their snapshotted auth/label custom attrs.
+
+    Residues missing either ``auth_asym_id`` or ``label_asym_id`` are
+    excluded from the mapping and counted in the returned ``dropped``
+    number so the caller can emit a correlated warning — a silent
+    drop here would misrepresent the per-side unique counts shown in
+    the log's footer.
+
+    Returns ``(rows, dropped)`` where
+    ``rows = [(auth_cid, [label_cid, ...sorted, unique]), ...]`` sorted
+    by ``auth_cid`` and ``dropped`` is the residue count omitted.
+    """
+    by_auth: dict = {}
+    dropped = 0
+    for residue in structure.residues:
+        auth = getattr(residue, AUTH_ATTR, None)
+        label = getattr(residue, LABEL_ATTR, None)
+        if not auth or not label:
+            dropped += 1
+            continue
+        by_auth.setdefault(auth, set()).add(label)
+
+    rows = [(a, sorted(by_auth[a])) for a in sorted(by_auth)]
+    return rows, dropped
+
+
+def _build_html_report(
+    structure,
+    current,
+    target,
+    mapping_rows,
+):
+    """Render the unified swapasym summary + groupby mapping HTML table.
+
+    Single table: ``<thead>`` carries the swap header and column names,
+    ``<tbody>`` carries the auth→label mapping rows (rowspan groupby with
+    a centred direction arrow), and ``<tfoot>`` reports the number of
+    unique ids on each side.
+
+    Clickable anchors follow ``target`` (the side chain_id matches after
+    the swap): that side uses the standard ``#model/cid`` atom-spec, the
+    other side uses the ``::auth_asym_id='cid'`` / ``::label_asym_id='cid'``
+    custom-attr selector so both columns remain clickable post-swap. When
+    ``structure.atomspec`` is empty, both sides fall back to the
+    custom-attr form — links never silently degrade to plain text.
+
+    Footer counts are computed directly from the residue custom attrs
+    (invariant to swap direction), so they describe the structure rather
+    than the before/after state.
+    """
+    from chimerax.core.logger import html_table_params
+
+    spec = getattr(structure, "atomspec", "") or ""
+
+    auth_unique = len(
+        {
+            getattr(r, AUTH_ATTR, None)
+            for r in structure.residues
+            if getattr(r, AUTH_ATTR, None)
+        }
+    )
+    label_unique = len(
+        {
+            getattr(r, LABEL_ATTR, None)
+            for r in structure.residues
+            if getattr(r, LABEL_ATTR, None)
+        }
+    )
+
+    def current_link(cid):
+        """Link that selects residues via the standard ``#model/cid`` spec.
+
+        Valid only for the side whose id matches ``Residue.chain_id`` after
+        the swap (i.e. ``target``). Falls back to plain text — and the
+        caller substitutes ``attr_link`` for both sides — when the
+        structure exposes no ``atomspec``, so links do not silently break.
+        """
+        return f'<a href="cxcmd:select {spec}/{cid}">{cid}</a>'
+
+    def attr_link(cid, attr):
+        """Link via a swapasym custom attribute, valid on either swap side."""
+        return f'<a href="cxcmd:select ::{attr}=&#39;{cid}&#39;">{cid}</a>'
+
+    from functools import partial
+
+    auth_attr_link = partial(attr_link, attr=AUTH_ATTR)
+    label_attr_link = partial(attr_link, attr=LABEL_ATTR)
+
+    if not spec:
+        # No atomspec means no valid standard selector; keep both sides
+        # clickable through the custom-attr selector instead.
+        auth_anchor, label_anchor = auth_attr_link, label_attr_link
+    elif target == "label":
+        auth_anchor, label_anchor = auth_attr_link, current_link
+    else:
+        auth_anchor, label_anchor = current_link, label_attr_link
+
+    arrow = "&rarr;" if target == "label" else "&larr;"
+
+    lines = [f"<table {html_table_params}>"]
+    lines.append("  <thead>")
+    lines.append(
+        f'    <tr><th colspan="3">swapasym: {structure} '
+        f"<code>{current} &rarr; {target}</code></th></tr>"
+    )
+    lines.append("    <tr><th>auth_asym_id</th><th></th><th>label_asym_id</th></tr>")
+    lines.append("  </thead>")
+
+    if mapping_rows:
+        lines.append("  <tbody>")
+        for auth_cid, label_cids in mapping_rows:
+            n = len(label_cids)
+            first, rest = label_cids[0], label_cids[1:]
+            lines.append(
+                "    <tr>"
+                f'<td rowspan="{n}" style="vertical-align:middle">'
+                f"<b>{auth_anchor(auth_cid)}</b></td>"
+                f'<td rowspan="{n}" style="vertical-align:middle; '
+                f'text-align:center">{arrow}</td>'
+                f"<td>{label_anchor(first)}</td>"
+                "</tr>"
+            )
+            for lbl in rest:
+                lines.append(f"    <tr><td>{label_anchor(lbl)}</td></tr>")
+        lines.append("  </tbody>")
+
+    lines.append("  <tfoot>")
+    lines.append(
+        "    <tr>"
+        f'<td style="text-align:center"><b>{auth_unique}</b></td>'
+        '<td style="text-align:center"><i>unique</i></td>'
+        f'<td style="text-align:center"><b>{label_unique}</b></td>'
+        "</tr>"
+    )
+    lines.append("  </tfoot>")
+    lines.append("</table>")
+
+    return "\n".join(lines)
+
+
 def _apply_side(structure, target_attr):
     """Rewrite chain_id of every residue from the given custom attribute.
 
@@ -366,7 +507,6 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"swapasym: {exc} Reload from a .cif file to use swapasym."
             ) from exc
         current = _current_mode(structure)
-        num_chains_before = structure.num_chains
 
         if current == "identical":
             session.logger.warning(
@@ -376,7 +516,7 @@ def swapasym(session, structures=None, mode="auto", color=False):
 
         target = _resolve_target(current, mode)
         target_attr = LABEL_ATTR if target == "label" else AUTH_ATTR
-        changed, skipped = _apply_side(structure, target_attr)
+        _, skipped = _apply_side(structure, target_attr)
 
         if skipped:
             session.logger.warning(
@@ -384,11 +524,21 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"empty {target_attr} (left on previous side)."
             )
 
-        session.logger.info(
-            f"swapasym: {structure} {current} -> {target} "
-            f"({changed}/{len(structure.residues)} residues changed, "
-            f"{num_chains_before} -> {structure.num_chains} chains)"
+        mapping_rows, dropped = _build_mapping_rows(structure)
+        if dropped:
+            session.logger.warning(
+                f"swapasym: {structure} omitted {dropped} residues from "
+                "the log mapping table (missing auth_asym_id or "
+                "label_asym_id)."
+            )
+
+        html = _build_html_report(
+            structure=structure,
+            current=current,
+            target=target,
+            mapping_rows=mapping_rows,
         )
+        session.logger.info(html, is_html=True)
 
     if color and targets:
         spec = " ".join(s.atomspec for s in targets)

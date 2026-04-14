@@ -73,6 +73,15 @@ carry their mmCIF `label_asym_id` values, so each gets its own color.
 |:---:|:---:|
 | ![4hhb colored bychain, auth side](docs/images/4hhb_auth_bychain.png) | ![4hhb colored bychain, label side](docs/images/4hhb_label_bychain.png) |
 
+Each `swapasym` run writes an HTML report to the ChimeraX log: the
+direction arrow flips with the swap, the groupby table shows which
+label chains every auth chain redistributes into, and every chain id
+is a clickable selector.
+
+| `swapasym mode label` | `swapasym mode auth` |
+|:---:|:---:|
+| ![swapasym log, auth → label](docs/images/log_mode_label.png) | ![swapasym log, label → auth](docs/images/log_mode_auth.png) |
+
 Structures that were not loaded from mmCIF (plain `.pdb` files) have no
 `mmcif_chain_id` information, so `swapasym` raises a UserError when you
 try to use it. Reload the structure from a `.cif` file to proceed.

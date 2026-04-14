@@ -38,6 +38,8 @@ def _install_stubs() -> None:
     fake_errors = MagicMock()
     fake_models = MagicMock()
     fake_models.ADD_MODELS = "add models"
+    fake_logger = MagicMock()
+    fake_logger.html_table_params = "border=1 cellpadding=4 cellspacing=0"
 
     fake_atomic.Residue = MagicMock()
     fake_atomic.Residue.register_attr = MagicMock()
@@ -56,6 +58,7 @@ def _install_stubs() -> None:
     sys.modules["chimerax.core.commands"] = fake_commands
     sys.modules["chimerax.core.errors"] = fake_errors
     sys.modules["chimerax.core.models"] = fake_models
+    sys.modules["chimerax.core.logger"] = fake_logger
     sys.modules["chimerax.atomic"] = fake_atomic
 
 

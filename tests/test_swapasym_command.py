@@ -130,21 +130,204 @@ def test_warns_when_residues_skipped_due_to_empty_label():
     assert "1 residues" in warnings or "1 residue" in warnings
 
 
-def test_info_log_format():
-    """Success log must include the current-mode, target-mode, and the
-    before/after chain counts — users need the delta to know the swap
-    actually restructured chain membership."""
+def _tfoot_region(html: str) -> str:
+    """Extract the ``<tfoot>…</tfoot>`` substring so tests can scope
+    assertions to the footer and not accidentally match cells from
+    the mapping body."""
+    start = html.index("<tfoot>")
+    end = html.index("</tfoot>") + len("</tfoot>")
+    return html[start:end]
+
+
+def test_info_log_is_single_html_table_with_tfoot_unique_counts():
+    """Success log emits exactly one HTML table; the swap header is in
+    ``<thead>``, the groupby mapping in ``<tbody>``, and the per-side
+    unique-chain_id counts in ``<tfoot>``."""
     session, _ = _session_with([("A", "A"), ("A", "E"), ("A", "F"), ("B", "B")])
 
     cmd.swapasym(session, mode="label")
 
-    info = " ".join(session.logger.info_msgs)
-    assert "auth -> label" in info
-    assert "residues changed" in info
-    # Format: "... (X -> Y chains)" regardless of the actual numbers.
-    import re
+    assert len(session.logger.html_info_msgs) == 1
+    html = session.logger.html_info_msgs[0]
+    assert html.count("<table") == 1
+    # Table skeleton all present; summary header spans all three columns.
+    assert "<thead>" in html
+    assert "<tbody>" in html
+    assert "<tfoot>" in html
+    assert 'colspan="3"' in html
+    # Header carries the direction text and column labels.
+    assert "auth &rarr; label" in html
+    assert "auth_asym_id" in html and "label_asym_id" in html
+    # Thead column row has exactly three <th> cells (blank middle column),
+    # plus the summary <th colspan="3"> on the preceding row.
+    thead_region = html[html.index("<thead>") : html.index("</thead>")]
+    assert thead_region.count("<th>") == 3  # three unadorned <th> cells
+    assert thead_region.count('<th colspan="3">') == 1
+    # Tfoot asserts — scope to the footer region so we do not false-match
+    # bold cells inside the mapping body.
+    tfoot = _tfoot_region(html)
+    assert "<i>unique</i>" in tfoot
+    # auth_unique (2) appears before label_unique (4) in the footer row.
+    assert tfoot.index("<b>2</b>") < tfoot.index("<b>4</b>")
+    # Noise from earlier iterations is gone.
+    assert "residues changed" not in html
+    assert "polymer chains" not in html
 
-    assert re.search(r"\d+ -> \d+ chains", info), info
+
+def test_info_log_mapping_columns_are_fixed_auth_label():
+    """Column order is always ``auth_asym_id | label_asym_id`` regardless
+    of swap direction; swap direction is conveyed by the summary header."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+    forward_html = session.logger.html_info_msgs[0]
+
+    session.logger.html_info_msgs.clear()
+    session.logger.info_msgs.clear()
+    cmd.swapasym(session, mode="auth")
+    reverse_html = session.logger.html_info_msgs[0]
+
+    for html in (forward_html, reverse_html):
+        assert html.index("auth_asym_id") < html.index("label_asym_id")
+
+
+def test_info_log_mapping_uses_rowspan_groupby():
+    """Both the auth cell and the arrow cell are rowspan-merged to cover
+    every label row — so a regression dropping the arrow's rowspan would
+    still produce one rowspan=3, but break the groupby visually."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+        FakeResidue("A", "F", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    # Two rowspan="3" cells (auth + arrow) covering labels A, E, F.
+    assert html.count('rowspan="3"') == 2
+
+
+def test_info_log_clickable_cells_follow_current_chain_id_side_forward():
+    """After auth→label, label cells link via ``#1/X`` (current) and auth
+    cells link via ``::auth_asym_id='X'`` (other side)."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
+    assert "cxcmd:select #1/E" in html
+    # Auth cell is wrapped in <b>; it must use the custom-attr selector
+    # rather than the standard spec after auth→label.
+    assert '<b><a href="cxcmd:select #1/' not in html
+
+
+def test_info_log_clickable_cells_follow_current_chain_id_side_reverse():
+    """After label→auth, auth cells link via ``#1/X`` (current) and label
+    cells link via ``::label_asym_id='X'`` (other side). Mirror of the
+    forward case."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+    session.logger.html_info_msgs.clear()
+    session.logger.info_msgs.clear()
+    cmd.swapasym(session, mode="auth")
+
+    html = session.logger.html_info_msgs[0]
+    assert "cxcmd:select ::label_asym_id=&#39;E&#39;" in html
+    # The auth cell (bolded) now uses the standard spec.
+    assert '<b><a href="cxcmd:select #1/A">A</a></b>' in html
+    # Label side must NOT use the standard spec after label→auth.
+    assert "cxcmd:select #1/E" not in html
+
+
+def test_info_log_clickable_cells_fall_back_to_attr_when_no_atomspec():
+    """Structures with empty ``atomspec`` have no valid standard selector;
+    both sides must still be clickable via the custom-attr selector."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    # Both sides use custom-attr selectors when atomspec is absent.
+    assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
+    assert "cxcmd:select ::label_asym_id=&#39;E&#39;" in html
+    # The broken ``#/X`` spec must not appear.
+    assert "cxcmd:select /A" not in html
+    assert "cxcmd:select /E" not in html
+
+
+def test_info_log_mapping_has_direction_arrow():
+    """The mapping table's middle column carries ``&rarr;`` after an
+    auth→label swap and ``&larr;`` after a label→auth swap. The centered
+    ``text-align:center`` cell style pins the match to the mapping table
+    rather than the summary header (which also uses ``&rarr;``)."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+    forward = session.logger.html_info_msgs[0]
+    assert "text-align:center" in forward
+    assert 'text-align:center">&rarr;' in forward
+    assert 'text-align:center">&larr;' not in forward
+
+    session.logger.html_info_msgs.clear()
+    session.logger.info_msgs.clear()
+    cmd.swapasym(session, mode="auth")
+    reverse = session.logger.html_info_msgs[0]
+    assert 'text-align:center">&larr;' in reverse
+    assert 'text-align:center">&rarr;' not in reverse
+
+
+def test_info_log_has_no_added_removed_tables():
+    """After simplification, only the summary + mapping tables remain."""
+    session, _ = _session_with([("A", "A"), ("A", "E")])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    assert "added" not in html
+    assert "removed" not in html
+    assert "details" not in html
 
 
 def test_multi_structure_all_processed():
