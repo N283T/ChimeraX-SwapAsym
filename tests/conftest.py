@@ -46,6 +46,8 @@ def _install_stubs() -> None:
 
     fake_commands.CmdDesc = MagicMock()
     fake_commands.EnumOf = MagicMock()
+    fake_commands.BoolArg = MagicMock()
+    fake_commands.run = MagicMock()
 
     fake_errors.UserError = _StubUserError
 
@@ -84,6 +86,7 @@ def reset_module_state():
     cmd._add_models_handlers.clear()
     cmd.Residue.register_attr.reset_mock()
     cmd.AtomicStructure.register_attr.reset_mock()
+    cmd.run.reset_mock()
     yield
     cmd._attrs_registered_sessions.clear()
     cmd._add_models_handlers.clear()

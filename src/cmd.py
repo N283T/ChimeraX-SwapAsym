@@ -15,7 +15,7 @@ import weakref
 from weakref import WeakSet
 
 from chimerax.atomic import AtomicStructure, AtomicStructuresArg, Residue
-from chimerax.core.commands import CmdDesc, EnumOf
+from chimerax.core.commands import BoolArg, CmdDesc, EnumOf, run
 from chimerax.core.errors import UserError
 
 AUTH_ATTR = "auth_asym_id"
@@ -337,7 +337,7 @@ def _resolve_target(current, mode):
     )
 
 
-def swapasym(session, structures=None, mode="auto"):
+def swapasym(session, structures=None, mode="auto", color=False):
     """Swap chain_id between auth_asym_id and label_asym_id.
 
     Parameters
@@ -349,6 +349,10 @@ def swapasym(session, structures=None, mode="auto"):
         ``auto`` toggles between the two sides (default). ``label`` forces
         chain_id to the mmCIF label_asym_id. ``auth`` forces chain_id back
         to the original PDB auth_asym_id.
+    color : bool
+        When true, run ``color bychain`` on each affected structure after
+        the swap. Useful for quickly visualizing the swap — label side
+        splits ligands / waters into distinct chain colors.
     """
     _register_attrs(session)
 
@@ -386,9 +390,13 @@ def swapasym(session, structures=None, mode="auto"):
             f"{num_chains_before} -> {structure.num_chains} chains)"
         )
 
+    if color and targets:
+        spec = " ".join(s.atomspec for s in targets)
+        run(session, f"color {spec} bychain", log=False)
+
 
 swapasym_desc = CmdDesc(
     optional=[("structures", AtomicStructuresArg)],
-    keyword=[("mode", EnumOf(MODES))],
+    keyword=[("mode", EnumOf(MODES)), ("color", BoolArg)],
     synopsis="Swap chain_id between auth_asym_id and label_asym_id",
 )

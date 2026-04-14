@@ -20,7 +20,7 @@ by either ID from an atom-spec.
 ## Command
 
 ```
-swapasym [structures]  [mode  auto|label|auth]
+swapasym [structures]  [mode  auto|label|auth]  [color  true|false]
 ```
 
 | Option | Meaning |
@@ -29,6 +29,7 @@ swapasym [structures]  [mode  auto|label|auth]
 | `mode auto` | Toggle: auth → label on first run, label → auth on next run (default). Raises when the structure is in a mixed state. |
 | `mode label` | Force `chain_id := label_asym_id`. |
 | `mode auth` | Force `chain_id := auth_asym_id` (original PDB chain). |
+| `color true` | After the swap, run `color bychain` on each affected structure — useful for immediately visualizing the chain split on the label side. Default `false`. |
 
 The bundle registers two custom Residue attributes usable from atom-specs:
 
@@ -56,12 +57,11 @@ one of them.
 
 ```
 open 4hhb
-info chains           # 4 polymer chains: A B C D (auth)
-swapasym              # 14 unique chain_ids: A-D polymer,
-                      #                      E-J HEM/PO4,
-                      #                      K-N waters
-select /E,F,G,H,I,J   # select all HEM / PO4 via standard atom-spec
-swapasym              # back to 4 chains A B C D
+info chains              # 4 polymer chains: A B C D (auth)
+swapasym color true      # 14 unique chain_ids + auto color bychain:
+                         #     A-D polymer, E-J HEM/PO4, K-N waters
+select /E,F,G,H,I,J      # select all HEM / PO4 via standard atom-spec
+swapasym color true      # back to 4 chains A B C D, re-colored
 ```
 
 Coloring 4HHB with `color bychain` makes the effect of `swapasym` obvious.
