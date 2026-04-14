@@ -130,9 +130,10 @@ def test_warns_when_residues_skipped_due_to_empty_label():
     assert "1 residues" in warnings or "1 residue" in warnings
 
 
-def test_info_log_is_html_table_with_summary_rows():
-    """Success log must be emitted as HTML (is_html=True) and include
-    rows for residues / polymer chains / unique chain_ids."""
+def test_info_log_is_html_table_with_unique_chain_id_count():
+    """Success log is emitted as HTML with a header carrying the swap
+    direction and a single row reporting the unique chain_id delta.
+    Residue counts and polymer chain counts were intentionally dropped."""
     session, _ = _session_with([("A", "A"), ("A", "E"), ("A", "F"), ("B", "B")])
 
     cmd.swapasym(session, mode="label")
@@ -141,9 +142,9 @@ def test_info_log_is_html_table_with_summary_rows():
     html = session.logger.html_info_msgs[0]
     assert "<table" in html
     assert "auth &rarr; label" in html
-    assert "residues" in html
-    assert "polymer chains" in html
     assert "unique chain_ids" in html
+    assert "residues" not in html or "residues changed" not in html
+    assert "polymer chains" not in html
 
 
 def test_info_log_mapping_columns_are_fixed_auth_label():

@@ -297,21 +297,12 @@ def _build_html_report(
     structure,
     current,
     target,
-    changed,
-    skipped,
-    total_residues,
-    num_polymer_before,
-    num_polymer_after,
     before_ids,
     after_ids,
     mapping_rows,
 ):
     """Assemble the summary + groupby mapping HTML tables."""
     from chimerax.core.logger import html_table_params
-
-    residues_cell = f"{changed}/{total_residues} changed"
-    if skipped:
-        residues_cell += f", {skipped} skipped"
 
     spec = getattr(structure, "atomspec", "") or ""
 
@@ -345,11 +336,6 @@ def _build_html_report(
     )
     lines.append("  </thead>")
     lines.append("  <tbody>")
-    lines.append(f"    <tr><td>residues</td><td>{residues_cell}</td></tr>")
-    lines.append(
-        "    <tr><td>polymer chains</td>"
-        f"<td>{num_polymer_before} &rarr; {num_polymer_after}</td></tr>"
-    )
     lines.append(
         "    <tr><td>unique chain_ids</td>"
         f"<td>{len(before_ids)} &rarr; {len(after_ids)}</td></tr>"
@@ -483,7 +469,6 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"swapasym: {exc} Reload from a .cif file to use swapasym."
             ) from exc
         current = _current_mode(structure)
-        num_polymer_before = structure.num_chains
         before_ids = _unique_chain_ids(structure)
 
         if current == "identical":
@@ -494,7 +479,7 @@ def swapasym(session, structures=None, mode="auto", color=False):
 
         target = _resolve_target(current, mode)
         target_attr = LABEL_ATTR if target == "label" else AUTH_ATTR
-        changed, skipped = _apply_side(structure, target_attr)
+        _, skipped = _apply_side(structure, target_attr)
 
         if skipped:
             session.logger.warning(
@@ -502,22 +487,13 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"empty {target_attr} (left on previous side)."
             )
 
-        after_ids = _unique_chain_ids(structure)
-        total_residues = len(structure.residues)
-        mapping_rows = _build_mapping_rows(structure)
-
         html = _build_html_report(
             structure=structure,
             current=current,
             target=target,
-            changed=changed,
-            skipped=skipped,
-            total_residues=total_residues,
-            num_polymer_before=num_polymer_before,
-            num_polymer_after=structure.num_chains,
             before_ids=before_ids,
-            after_ids=after_ids,
-            mapping_rows=mapping_rows,
+            after_ids=_unique_chain_ids(structure),
+            mapping_rows=_build_mapping_rows(structure),
         )
         session.logger.info(html, is_html=True)
 
