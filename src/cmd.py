@@ -376,7 +376,7 @@ def _build_html_report(
     lines.append(
         "    <tr>"
         f'<td style="text-align:center"><b>{auth_unique}</b></td>'
-        '<td style="text-align:center"><i>unique chain_ids</i></td>'
+        '<td style="text-align:center"><i>unique</i></td>'
         f'<td style="text-align:center"><b>{label_unique}</b></td>'
         "</tr>"
     )

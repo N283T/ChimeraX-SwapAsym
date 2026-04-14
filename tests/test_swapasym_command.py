@@ -149,7 +149,7 @@ def test_info_log_is_single_html_table_with_tfoot_unique_counts():
     assert "auth_asym_id" in html and "label_asym_id" in html
     # Footer row labels the unique count.
     assert "<tfoot>" in html
-    assert "unique chain_ids" in html
+    assert "<i>unique</i>" in html
     # The two residues of chain A share a single auth id but two label
     # ids, so auth_unique == 2 (A, B) and label_unique == 4 (A, E, F, B).
     assert "<b>2</b>" in html
