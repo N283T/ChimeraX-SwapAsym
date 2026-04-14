@@ -8,15 +8,22 @@ class _SwapasymAPI(BundleAPI):
 
     @staticmethod
     def initialize(session, bundle_info):
-        """Register custom attributes at bundle-init time.
+        """Register attributes and subscribe to ADD_MODELS.
 
-        Attribute registration must happen before any session restore path
-        tries to populate residue/structure attributes on this session;
-        otherwise session-persistent values are silently dropped.
+        Every structure opened after bundle init gets ``auth_asym_id`` and
+        ``label_asym_id`` populated automatically (for mmCIF structures),
+        so residue-attribute selectors like ``::label_asym_id="E"`` work
+        without having to run ``swapasym`` first.
         """
         from . import cmd
 
-        cmd._register_attrs(session)
+        cmd.install(session)
+
+    @staticmethod
+    def finish(session, bundle_info):
+        from . import cmd
+
+        cmd.uninstall(session)
 
     @staticmethod
     def register_command(bundle_info, command_info, logger):
