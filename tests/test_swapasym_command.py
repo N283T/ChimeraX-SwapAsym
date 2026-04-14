@@ -209,6 +209,34 @@ def test_info_log_clickable_cells_follow_current_chain_id_side():
     assert "cxcmd:select #1/E" in html
 
 
+def test_info_log_mapping_has_direction_arrow():
+    """The mapping table's middle column carries ``&rarr;`` after an
+    auth→label swap and ``&larr;`` after a label→auth swap. The centered
+    ``text-align:center`` cell style pins the match to the mapping table
+    rather than the summary header (which also uses ``&rarr;``)."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+    forward = session.logger.html_info_msgs[0]
+    assert "text-align:center" in forward
+    assert 'text-align:center">&rarr;' in forward
+    assert 'text-align:center">&larr;' not in forward
+
+    session.logger.html_info_msgs.clear()
+    session.logger.info_msgs.clear()
+    cmd.swapasym(session, mode="auth")
+    reverse = session.logger.html_info_msgs[0]
+    assert 'text-align:center">&larr;' in reverse
+    assert 'text-align:center">&rarr;' not in reverse
+
+
 def test_info_log_has_no_added_removed_tables():
     """After simplification, only the summary + mapping tables remain."""
     session, _ = _session_with([("A", "A"), ("A", "E")])

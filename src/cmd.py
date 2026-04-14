@@ -357,11 +357,14 @@ def _build_html_report(
     lines.append("  </tbody>")
     lines.append("</table>")
 
-    # --- Groupby mapping (rowspan-merged auth cell) -------------------
+    # --- Groupby mapping (rowspan-merged auth cell + direction arrow) ---
     if mapping_rows:
+        arrow = "&rarr;" if target == "label" else "&larr;"
         lines.append(f"<table {html_table_params}>")
         lines.append("  <thead>")
-        lines.append("    <tr><th>auth_asym_id</th><th>label_asym_id</th></tr>")
+        lines.append(
+            "    <tr><th>auth_asym_id</th><th></th><th>label_asym_id</th></tr>"
+        )
         lines.append("  </thead>")
         lines.append("  <tbody>")
         for auth_cid, label_cids in mapping_rows:
@@ -369,8 +372,10 @@ def _build_html_report(
             first, rest = label_cids[0], label_cids[1:]
             lines.append(
                 "    <tr>"
-                f'<td rowspan="{n}" style="vertical-align:top">'
+                f'<td rowspan="{n}" style="vertical-align:middle">'
                 f"<b>{auth_anchor(auth_cid)}</b></td>"
+                f'<td rowspan="{n}" style="vertical-align:middle; '
+                f'text-align:center">{arrow}</td>'
                 f"<td>{label_anchor(first)}</td>"
                 "</tr>"
             )
