@@ -130,20 +130,32 @@ def test_warns_when_residues_skipped_due_to_empty_label():
     assert "1 residues" in warnings or "1 residue" in warnings
 
 
-def test_info_log_is_html_table_with_unique_chain_id_count():
-    """Success log is emitted as HTML with a header carrying the swap
-    direction and a single row reporting the unique chain_id delta.
-    Residue counts and polymer chain counts were intentionally dropped."""
+def test_info_log_is_single_html_table_with_tfoot_unique_counts():
+    """Success log emits exactly one HTML table; the swap header is in
+    ``<thead>``, the groupby mapping in ``<tbody>``, and the per-side
+    unique-chain_id counts in ``<tfoot>``. Residue / polymer-chain noise
+    was removed; the directional info comes from the arrow plus the
+    header text."""
     session, _ = _session_with([("A", "A"), ("A", "E"), ("A", "F"), ("B", "B")])
 
     cmd.swapasym(session, mode="label")
 
     assert len(session.logger.html_info_msgs) == 1
     html = session.logger.html_info_msgs[0]
-    assert "<table" in html
+    # Exactly one <table>.
+    assert html.count("<table") == 1
+    # Header carries the direction text and column labels.
     assert "auth &rarr; label" in html
+    assert "auth_asym_id" in html and "label_asym_id" in html
+    # Footer row labels the unique count.
+    assert "<tfoot>" in html
     assert "unique chain_ids" in html
-    assert "residues" not in html or "residues changed" not in html
+    # The two residues of chain A share a single auth id but two label
+    # ids, so auth_unique == 2 (A, B) and label_unique == 4 (A, E, F, B).
+    assert "<b>2</b>" in html
+    assert "<b>4</b>" in html
+    # Residue / polymer noise is gone.
+    assert "residues changed" not in html
     assert "polymer chains" not in html
 
 

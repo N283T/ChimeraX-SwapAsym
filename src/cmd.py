@@ -270,11 +270,6 @@ def _current_mode(structure):
     return "mixed"
 
 
-def _unique_chain_ids(structure):
-    """Return the set of distinct ``Residue.chain_id`` values in the structure."""
-    return {r.chain_id for r in structure.residues}
-
-
 def _build_mapping_rows(structure):
     """Aggregate residues by auth_asym_id, listing the label_asym_ids each
     auth chain spans. Columns are always ordered auth → label, regardless
@@ -297,14 +292,35 @@ def _build_html_report(
     structure,
     current,
     target,
-    before_ids,
-    after_ids,
     mapping_rows,
 ):
-    """Assemble the summary + groupby mapping HTML tables."""
+    """Render the unified swapasym summary + groupby mapping HTML table.
+
+    Single table: ``<thead>`` carries the swap header and column names,
+    ``<tbody>`` carries the auth→label mapping rows (rowspan groupby with
+    a centred direction arrow), and ``<tfoot>`` reports the number of
+    unique ids on each side.
+    """
     from chimerax.core.logger import html_table_params
 
     spec = getattr(structure, "atomspec", "") or ""
+
+    # Unique counts on each side are invariant to swap direction; compute
+    # them straight from the residue custom attributes.
+    auth_unique = len(
+        {
+            getattr(r, AUTH_ATTR, None)
+            for r in structure.residues
+            if getattr(r, AUTH_ATTR, None)
+        }
+    )
+    label_unique = len(
+        {
+            getattr(r, LABEL_ATTR, None)
+            for r in structure.residues
+            if getattr(r, LABEL_ATTR, None)
+        }
+    )
 
     def current_link(cid):
         """Link that selects residues whose CURRENT chain_id matches."""
@@ -327,31 +343,18 @@ def _build_html_report(
         auth_anchor = current_link
         label_anchor = lambda cid: attr_link(cid, LABEL_ATTR)  # noqa: E731
 
-    # --- Summary table ------------------------------------------------
+    arrow = "&rarr;" if target == "label" else "&larr;"
+
     lines = [f"<table {html_table_params}>"]
     lines.append("  <thead>")
     lines.append(
-        f'    <tr><th colspan="2">swapasym: {structure} '
+        f'    <tr><th colspan="3">swapasym: {structure} '
         f"<code>{current} &rarr; {target}</code></th></tr>"
     )
+    lines.append("    <tr><th>auth_asym_id</th><th></th><th>label_asym_id</th></tr>")
     lines.append("  </thead>")
-    lines.append("  <tbody>")
-    lines.append(
-        "    <tr><td>unique chain_ids</td>"
-        f"<td>{len(before_ids)} &rarr; {len(after_ids)}</td></tr>"
-    )
-    lines.append("  </tbody>")
-    lines.append("</table>")
 
-    # --- Groupby mapping (rowspan-merged auth cell + direction arrow) ---
     if mapping_rows:
-        arrow = "&rarr;" if target == "label" else "&larr;"
-        lines.append(f"<table {html_table_params}>")
-        lines.append("  <thead>")
-        lines.append(
-            "    <tr><th>auth_asym_id</th><th></th><th>label_asym_id</th></tr>"
-        )
-        lines.append("  </thead>")
         lines.append("  <tbody>")
         for auth_cid, label_cids in mapping_rows:
             n = len(label_cids)
@@ -368,7 +371,17 @@ def _build_html_report(
             for lbl in rest:
                 lines.append(f"    <tr><td>{label_anchor(lbl)}</td></tr>")
         lines.append("  </tbody>")
-        lines.append("</table>")
+
+    lines.append("  <tfoot>")
+    lines.append(
+        "    <tr>"
+        f'<td style="text-align:center"><b>{auth_unique}</b></td>'
+        '<td style="text-align:center"><i>unique chain_ids</i></td>'
+        f'<td style="text-align:center"><b>{label_unique}</b></td>'
+        "</tr>"
+    )
+    lines.append("  </tfoot>")
+    lines.append("</table>")
 
     return "\n".join(lines)
 
@@ -469,7 +482,6 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"swapasym: {exc} Reload from a .cif file to use swapasym."
             ) from exc
         current = _current_mode(structure)
-        before_ids = _unique_chain_ids(structure)
 
         if current == "identical":
             session.logger.warning(
@@ -491,8 +503,6 @@ def swapasym(session, structures=None, mode="auto", color=False):
             structure=structure,
             current=current,
             target=target,
-            before_ids=before_ids,
-            after_ids=_unique_chain_ids(structure),
             mapping_rows=_build_mapping_rows(structure),
         )
         session.logger.info(html, is_html=True)
