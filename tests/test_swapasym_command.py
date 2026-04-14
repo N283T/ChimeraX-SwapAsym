@@ -146,35 +146,9 @@ def test_info_log_is_html_table_with_summary_rows():
     assert "unique chain_ids" in html
 
 
-def test_info_log_mapping_table_auth_to_label_direction():
-    """Swapping to the label side yields a mapping table with columns
-    ``auth_asym_id | label_asym_id`` and a row per source auth chain
-    listing each label chain id it redistributes into."""
-    from _fakes import FakeResidue, FakeStructure
-
-    residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
-        FakeResidue("B", "B", polymer=True, name="VAL"),
-        FakeResidue("B", "F", polymer=False, name="HOH"),
-    ]
-    structure = FakeStructure(residues, atomspec="#1")
-    session = FakeSession(models=[structure])
-
-    cmd.swapasym(session, mode="label")
-
-    html = session.logger.html_info_msgs[0]
-    # Header order follows the swap direction.
-    assert html.index("auth_asym_id") < html.index("label_asym_id")
-    # Source column uses the custom-attr selector (works on either side).
-    assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
-    # Target column uses the current atomspec (chain_id == label now).
-    assert "cxcmd:select #1/E" in html
-    assert "cxcmd:select #1/F" in html
-
-
-def test_info_log_mapping_table_label_to_auth_direction():
-    """Reverse swap inverts the column order to ``label_asym_id | auth_asym_id``."""
+def test_info_log_mapping_columns_are_fixed_auth_label():
+    """Column order is always ``auth_asym_id | label_asym_id`` regardless
+    of swap direction; swap direction is conveyed by the summary header."""
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
@@ -185,16 +159,54 @@ def test_info_log_mapping_table_label_to_auth_direction():
     session = FakeSession(models=[structure])
 
     cmd.swapasym(session, mode="label")
+    forward_html = session.logger.html_info_msgs[0]
+
     session.logger.html_info_msgs.clear()
     session.logger.info_msgs.clear()
-    cmd.swapasym(session, mode="auth")  # label -> auth
+    cmd.swapasym(session, mode="auth")
+    reverse_html = session.logger.html_info_msgs[0]
+
+    for html in (forward_html, reverse_html):
+        assert html.index("auth_asym_id") < html.index("label_asym_id")
+
+
+def test_info_log_mapping_uses_rowspan_groupby():
+    """The auth cell is merged via ``rowspan`` so each label occupies its
+    own row under a single auth cell — the groupby layout the user asked for."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
+        FakeResidue("A", "F", polymer=False, name="HOH"),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
 
     html = session.logger.html_info_msgs[0]
-    assert html.index("label_asym_id") < html.index("auth_asym_id")
-    # Source is now label; link uses the label custom-attr selector.
-    assert "cxcmd:select ::label_asym_id=&#39;E&#39;" in html
-    # Target is auth; chain_id is back to auth, so the standard spec works.
-    assert "cxcmd:select #1/A" in html
+    # One rowspan=3 cell for auth A covering labels A, E, F.
+    assert 'rowspan="3"' in html
+
+
+def test_info_log_clickable_cells_follow_current_chain_id_side():
+    """Post-auth→label swap: label cells link via standard spec (#1/X),
+    auth cells link via the ``::auth_asym_id='X'`` custom selector."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
+    assert "cxcmd:select #1/E" in html
 
 
 def test_info_log_has_no_added_removed_tables():

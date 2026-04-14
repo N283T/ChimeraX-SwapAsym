@@ -275,32 +275,22 @@ def _unique_chain_ids(structure):
     return {r.chain_id for r in structure.residues}
 
 
-def _build_mapping_rows(structure, target):
-    """Aggregate residues by (source, target) custom-attribute pair.
+def _build_mapping_rows(structure):
+    """Aggregate residues by auth_asym_id, listing the label_asym_ids each
+    auth chain spans. Columns are always ordered auth → label, regardless
+    of which side ``chain_id`` is currently on.
 
-    ``target`` is the side that ``chain_id`` was just swapped to:
-    ``"label"`` makes source = auth_asym_id and target = label_asym_id,
-    ``"auth"`` inverts them so the columns always read "what was before
-    the swap" → "what is now". Returns ``(src_header, tgt_header, rows)``
-    where ``rows = [(src_cid, [tgt_cid, ...sorted, unique]), ...]``.
+    Returns ``[(auth_cid, [label_cid, ...sorted, unique]), ...]``.
     """
-    if target == "label":
-        src_attr, tgt_attr = AUTH_ATTR, LABEL_ATTR
-        src_header, tgt_header = "auth_asym_id", "label_asym_id"
-    else:
-        src_attr, tgt_attr = LABEL_ATTR, AUTH_ATTR
-        src_header, tgt_header = "label_asym_id", "auth_asym_id"
-
-    by_src: dict = {}
+    by_auth: dict = {}
     for residue in structure.residues:
-        s = getattr(residue, src_attr, None)
-        t = getattr(residue, tgt_attr, None)
-        if not s or not t:
+        a = getattr(residue, AUTH_ATTR, None)
+        l = getattr(residue, LABEL_ATTR, None)
+        if not a or not l:
             continue
-        by_src.setdefault(s, set()).add(t)
+        by_auth.setdefault(a, set()).add(l)
 
-    rows = [(s, sorted(by_src[s])) for s in sorted(by_src)]
-    return src_header, tgt_header, rows
+    return [(a, sorted(by_auth[a])) for a in sorted(by_auth)]
 
 
 def _build_html_report(
@@ -314,11 +304,9 @@ def _build_html_report(
     num_polymer_after,
     before_ids,
     after_ids,
-    mapping_src_header,
-    mapping_tgt_header,
     mapping_rows,
 ):
-    """Assemble the summary + mapping HTML tables logged after each swap."""
+    """Assemble the summary + groupby mapping HTML tables."""
     from chimerax.core.logger import html_table_params
 
     residues_cell = f"{changed}/{total_residues} changed"
@@ -326,7 +314,6 @@ def _build_html_report(
         residues_cell += f", {skipped} skipped"
 
     spec = getattr(structure, "atomspec", "") or ""
-    src_attr_name = AUTH_ATTR if mapping_src_header == "auth_asym_id" else LABEL_ATTR
 
     def current_link(cid):
         """Link that selects residues whose CURRENT chain_id matches."""
@@ -338,6 +325,16 @@ def _build_html_report(
         """Link that selects residues via a swapasym custom attribute,
         regardless of which side chain_id is currently on."""
         return f'<a href="cxcmd:select ::{attr}=&#39;{cid}&#39;">{cid}</a>'
+
+    # After the swap, chain_id matches the target side. Clickable anchors
+    # use the standard spec for whichever side is current and the
+    # custom-attr selector for the other.
+    if target == "label":
+        auth_anchor = lambda cid: attr_link(cid, AUTH_ATTR)  # noqa: E731
+        label_anchor = current_link
+    else:
+        auth_anchor = current_link
+        label_anchor = lambda cid: attr_link(cid, LABEL_ATTR)  # noqa: E731
 
     # --- Summary table ------------------------------------------------
     lines = [f"<table {html_table_params}>"]
@@ -360,24 +357,25 @@ def _build_html_report(
     lines.append("  </tbody>")
     lines.append("</table>")
 
-    # --- Mapping table ------------------------------------------------
+    # --- Groupby mapping (rowspan-merged auth cell) -------------------
     if mapping_rows:
         lines.append(f"<table {html_table_params}>")
         lines.append("  <thead>")
-        lines.append(
-            f"    <tr><th>{mapping_src_header}</th><th>{mapping_tgt_header}</th></tr>"
-        )
+        lines.append("    <tr><th>auth_asym_id</th><th>label_asym_id</th></tr>")
         lines.append("  </thead>")
         lines.append("  <tbody>")
-        for src_cid, tgt_cids in mapping_rows:
-            # Source side is "before the swap". Use the custom-attr
-            # selector so the link works regardless of the side chain_id
-            # is currently on.
-            src_text = attr_link(src_cid, src_attr_name)
-            # Target side equals the current chain_id post-swap, so the
-            # standard spec selector is correct and concise.
-            tgt_text = ", ".join(current_link(t) for t in tgt_cids)
-            lines.append(f"    <tr><td><b>{src_text}</b></td><td>{tgt_text}</td></tr>")
+        for auth_cid, label_cids in mapping_rows:
+            n = len(label_cids)
+            first, rest = label_cids[0], label_cids[1:]
+            lines.append(
+                "    <tr>"
+                f'<td rowspan="{n}" style="vertical-align:top">'
+                f"<b>{auth_anchor(auth_cid)}</b></td>"
+                f"<td>{label_anchor(first)}</td>"
+                "</tr>"
+            )
+            for lbl in rest:
+                lines.append(f"    <tr><td>{label_anchor(lbl)}</td></tr>")
         lines.append("  </tbody>")
         lines.append("</table>")
 
@@ -501,7 +499,7 @@ def swapasym(session, structures=None, mode="auto", color=False):
 
         after_ids = _unique_chain_ids(structure)
         total_residues = len(structure.residues)
-        src_header, tgt_header, mapping_rows = _build_mapping_rows(structure, target)
+        mapping_rows = _build_mapping_rows(structure)
 
         html = _build_html_report(
             structure=structure,
@@ -514,8 +512,6 @@ def swapasym(session, structures=None, mode="auto", color=False):
             num_polymer_after=structure.num_chains,
             before_ids=before_ids,
             after_ids=after_ids,
-            mapping_src_header=src_header,
-            mapping_tgt_header=tgt_header,
             mapping_rows=mapping_rows,
         )
         session.logger.info(html, is_html=True)
