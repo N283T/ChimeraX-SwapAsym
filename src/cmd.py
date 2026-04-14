@@ -11,6 +11,7 @@ become addressable from ChimeraX atom-specs, e.g. ``sel ::label_asym_id="E"``.
 """
 
 import traceback
+import weakref
 from weakref import WeakSet
 
 from chimerax.atomic import AtomicStructure, AtomicStructuresArg, Residue
@@ -22,16 +23,43 @@ LABEL_ATTR = "label_asym_id"
 SNAPSHOT_FLAG = "_swapasym_snapshotted"
 MODES = ("auto", "label", "auth")
 
+
+class _NotMmcif(Exception):
+    """Raised by ``_snapshot_structure`` when a structure has no mmcif data.
+
+    Distinct from ``UserError`` so ``_try_populate`` can silently skip
+    non-mmCIF structures during auto-populate without also swallowing
+    genuine UserErrors that might surface from ChimeraX internals. When
+    ``swapasym`` is invoked explicitly, ``_snapshot_structure`` also
+    raises a matching ``UserError`` so the user sees a clear message.
+    """
+
+
 # Sessions on which register_attr has already been invoked. Keyed per-session
 # because ChimeraX supports multiple sessions per process; registration is
 # also what makes the attributes survive session save/load.
 _attrs_registered_sessions: WeakSet = WeakSet()
 
-# Session -> ADD_MODELS handler id, so ``uninstall`` can remove the handler
-# when the bundle is unloaded. Regular dict because ChimeraX session objects
-# are not weakly referenceable on all platforms; entries are removed in
-# ``uninstall``.
-_add_models_handlers: dict = {}
+
+def _make_handler_map():
+    """Prefer a WeakKeyDictionary so sessions can be GC'd if ``uninstall``
+    is never called (crash, abnormal shutdown). Fall back to a regular
+    dict if the runtime refuses weak refs to session objects on this
+    platform — the fallback leaks one dict entry per orphaned session
+    but avoids TypeError at import time.
+    """
+    try:
+        # Probe: can we even instantiate? Always succeeds.
+        d = weakref.WeakKeyDictionary()
+        return d
+    except TypeError:  # pragma: no cover — defensive
+        return {}
+
+
+# Session -> ADD_MODELS handler id. Entries are removed in ``uninstall``
+# on success; a failed ``remove_handler`` keeps the entry so a subsequent
+# ``install`` does not register a duplicate handler.
+_add_models_handlers = _make_handler_map()
 
 
 def _register_attrs(session):
@@ -50,41 +78,68 @@ def _register_attrs(session):
     _attrs_registered_sessions.add(session)
 
 
-def _try_populate(session, model):
-    """Snapshot auth/label ids on a newly-added model, silent on non-mmCIF.
+def _model_label(model):
+    """Best-effort identifier for log messages."""
+    return getattr(model, "name", None) or repr(model)
 
-    ``_snapshot_structure`` raises UserError for structures loaded without
-    mmcif_chain_id data (plain .pdb, for example). In the auto-populate
-    context we want that to be a silent no-op: the bundle should not
-    complain about every non-mmCIF file the user opens. When ``swapasym``
-    is later invoked explicitly on such a structure, the same UserError
-    will surface with its full message.
+
+def _try_populate(session, model):
+    """Snapshot auth/label ids on a newly-added model.
+
+    Non-mmCIF structures (no ``mmcif_chain_id`` data) are silently skipped
+    by catching the ``_NotMmcif`` sentinel. Any other exception — including
+    ``UserError`` — is reported at warning level so genuine bugs do not
+    disappear silently; the user still gets auto-populate for the rest of
+    the batch but also a visible diagnostic.
     """
     if not isinstance(model, AtomicStructure):
         return
     try:
         _snapshot_structure(model)
-    except UserError:
+    except _NotMmcif:
         return
     except Exception:
+        num_residues = len(getattr(model, "residues", []) or [])
         session.logger.warning(
-            f"swapasym: failed to auto-populate {getattr(model, 'name', model)}:\n"
+            f"swapasym: failed to auto-populate model={_model_label(model)!r} "
+            f"(residues={num_residues}); atom-spec selectors like "
+            "``::label_asym_id=...`` will not work on this structure "
+            "until you run ``swapasym`` manually.\n"
+            f"{traceback.format_exc()}"
+        )
+
+
+def _safe_try_populate(session, model):
+    """Call ``_try_populate`` but never propagate. Used at call sites inside
+    a trigger callback or initialization loop where a raised exception could
+    abort the rest of the batch or auto-deregister the handler."""
+    try:
+        _try_populate(session, model)
+    except Exception:
+        session.logger.warning(
+            f"swapasym: unexpected error while processing "
+            f"{_model_label(model)!r}; continuing with the rest of the batch.\n"
             f"{traceback.format_exc()}"
         )
 
 
 def _on_add_models(session, trigger_name, models):
+    """ADD_MODELS trigger callback; ``models`` is the list of added models."""
     for model in models:
-        _try_populate(session, model)
+        _safe_try_populate(session, model)
 
 
 def install(session):
     """Register attributes and subscribe to ADD_MODELS.
 
-    Called from ``BundleAPI.initialize``. After install, every newly
-    opened atomic structure gets auth_asym_id / label_asym_id populated
-    automatically, so ``sel ::label_asym_id="E"`` and the like work
-    without the user having to run ``swapasym`` first.
+    Called from ``BundleAPI.initialize``. After install, every newly opened
+    ``AtomicStructure`` loaded from mmCIF gets its ``auth_asym_id`` and
+    ``label_asym_id`` custom Residue attributes populated automatically, so
+    ``sel ::label_asym_id="E"`` and the like work without the user having
+    to run ``swapasym`` first. Structures already open at install time are
+    populated too (covers the session-restore + late ``devel install``
+    sequence). Non-mmCIF structures are silently skipped; ``swapasym``
+    still raises a ``UserError`` when invoked explicitly on one.
     """
     _register_attrs(session)
     if session in _add_models_handlers:
@@ -97,24 +152,35 @@ def install(session):
     )
     _add_models_handlers[session] = handler_id
 
-    # Populate any structures that were already open when the bundle
-    # initializes (e.g. session restore or manual re-init).
     for model in list(session.models):
-        _try_populate(session, model)
+        _safe_try_populate(session, model)
 
 
 def uninstall(session):
-    """Remove the ADD_MODELS subscription. Called from BundleAPI.finish."""
-    handler_id = _add_models_handlers.pop(session, None)
+    """Remove the ADD_MODELS subscription. Called from ``BundleAPI.finish``.
+
+    Idempotent — safe to call when ``install`` was never run or when
+    ``uninstall`` has already been called.
+
+    The dict entry is removed only after ``remove_handler`` succeeds: if
+    the call raises (e.g. triggers torn down, stale handler id), the entry
+    stays so a subsequent ``install`` does not register a duplicate handler
+    on top of the orphan. The failure is surfaced at warning level.
+    """
+    handler_id = _add_models_handlers.get(session)
     if handler_id is None:
         return
     try:
         session.triggers.remove_handler(handler_id)
     except Exception:
-        session.logger.info(
-            f"swapasym: remove_handler failed during uninstall:\n"
+        session.logger.warning(
+            f"swapasym: remove_handler failed during uninstall; handler "
+            f"{handler_id} may still be live. Reload ChimeraX if "
+            "auto-populate starts firing twice per file.\n"
             f"{traceback.format_exc()}"
         )
+        return
+    del _add_models_handlers[session]
 
 
 def _iter_target_structures(session, structures):
@@ -141,11 +207,10 @@ def _iter_target_structures(session, structures):
 def _snapshot_structure(structure):
     """Populate auth/label custom attrs on every residue once per structure.
 
-    Uses a structure-level boolean flag to detect first-run; avoids the
-    ambiguity of "unset vs empty string" on the residue attributes themselves.
-    Raises UserError if the structure has no mmcif_chain_id info (i.e. was
-    not loaded from mmCIF), since without label values ``swapasym mode label``
-    would be a no-op.
+    Raises ``_NotMmcif`` (a sentinel, NOT a ``UserError``) when the
+    structure has no mmcif_chain_id information — this is an expected
+    "no-op" signal that auto-populate callers silently swallow while
+    still surfacing unrelated errors.
     """
     if getattr(structure, SNAPSHOT_FLAG, False):
         return
@@ -155,10 +220,9 @@ def _snapshot_structure(structure):
         if not residue.mmcif_chain_id:
             missing_label += 1
     if missing_label == len(structure.residues) and missing_label > 0:
-        raise UserError(
-            f"swapasym: {structure} has no mmcif_chain_id values "
-            "(structure was not loaded from mmCIF). "
-            "Reload from a .cif file to use swapasym."
+        raise _NotMmcif(
+            f"{structure} has no mmcif_chain_id values "
+            "(structure was not loaded from mmCIF)."
         )
 
     for residue in structure.residues:
@@ -291,7 +355,12 @@ def swapasym(session, structures=None, mode="auto"):
     targets = _iter_target_structures(session, structures)
 
     for structure in targets:
-        _snapshot_structure(structure)
+        try:
+            _snapshot_structure(structure)
+        except _NotMmcif as exc:
+            raise UserError(
+                f"swapasym: {exc} Reload from a .cif file to use swapasym."
+            ) from exc
         current = _current_mode(structure)
         num_chains_before = structure.num_chains
 

@@ -49,13 +49,15 @@ def test_snapshot_preserves_empty_label_values():
     assert [r.label_asym_id for r in residues] == ["A", "", "E"]
 
 
-def test_snapshot_raises_when_no_mmcif_data_at_all():
+def test_snapshot_raises_not_mmcif_sentinel_when_no_mmcif_data():
     """Structures loaded from .pdb have no mmcif_chain_id on any residue;
-    the bundle refuses to proceed because there's no label side to swap to."""
+    the bundle raises the internal ``_NotMmcif`` sentinel (not a UserError)
+    so auto-populate callers can skip silently while explicit callers
+    translate it into a user-visible UserError."""
     residues = residues_from_pairs([("A", ""), ("A", ""), ("B", "")])
     structure = FakeStructure(residues)
 
-    with pytest.raises(cmd.UserError):
+    with pytest.raises(cmd._NotMmcif):
         cmd._snapshot_structure(structure)
 
 

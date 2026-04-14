@@ -38,15 +38,19 @@ select ::label_asym_id="E"
 ```
 
 Attribute values are populated automatically on every mmCIF structure
-the moment it opens, so the selectors work before you ever run
+the moment it opens (and on any structures already loaded when the
+bundle initializes), so the selectors work before you ever run
 `swapasym`. Non-mmCIF structures (plain `.pdb`) are silently skipped;
 `swapasym` will still raise a UserError if you invoke it explicitly on
 one of them.
 
-> **Note.** `label_asym_id` is read from `Residue.mmcif_chain_id`, which
-> ChimeraX limits to 4 characters. For typical PDB entries this matches
-> `_atom_site.label_asym_id` exactly; for mmCIF files that use longer
-> label ids the auto-populated value will be truncated.
+> **Note — 4-character `mmcif_chain_id` cap.** `label_asym_id` is read
+> via `Residue.mmcif_chain_id`, which ChimeraX truncates to 4 characters.
+> All current wwPDB deposits fit within that cap, so the auto-populated
+> value normally matches `_atom_site.label_asym_id` exactly. If you load
+> a custom mmCIF with longer `_atom_site.label_asym_id` values, distinct
+> ids may collide after truncation and `swapasym mode label` will merge
+> those chains.
 
 ## Example
 

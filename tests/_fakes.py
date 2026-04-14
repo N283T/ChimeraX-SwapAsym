@@ -117,11 +117,19 @@ class FakeLogger:
 
 
 class FakeTriggers:
-    """Minimal stand-in for ``session.triggers`` used by install/uninstall."""
+    """Minimal stand-in for ``session.triggers`` used by install/uninstall.
+
+    Deliberately does NOT catch handler exceptions in ``fire`` (unlike real
+    ChimeraX's ``Triggers.activate_trigger``): propagating exceptions in
+    tests surfaces real bugs. Set ``remove_raises`` to make the next
+    ``remove_handler`` call raise the given exception — used to exercise
+    the uninstall failure path.
+    """
 
     def __init__(self):
         self._handlers: dict[int, tuple] = {}
         self._next_id = 1
+        self.remove_raises: Exception | None = None
 
     def add_handler(self, trigger_name: str, callback):
         hid = self._next_id
@@ -130,6 +138,8 @@ class FakeTriggers:
         return hid
 
     def remove_handler(self, handler_id) -> None:
+        if self.remove_raises is not None:
+            raise self.remove_raises
         self._handlers.pop(handler_id, None)
 
     def fire(self, trigger_name: str, payload):
