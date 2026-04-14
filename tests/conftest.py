@@ -60,10 +60,6 @@ def _install_stubs() -> None:
     sys.modules["chimerax.core.models"] = fake_models
     sys.modules["chimerax.core.logger"] = fake_logger
     sys.modules["chimerax.atomic"] = fake_atomic
-    # chimerax.mmcif is only imported lazily inside _build_entity_map, so
-    # leaving it absent would force the ImportError fallback. Tests that
-    # need entity data inject a fake via monkeypatch.
-    sys.modules.pop("chimerax.mmcif", None)
 
 
 def _load_cmd_module():

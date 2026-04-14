@@ -271,21 +271,30 @@ def _current_mode(structure):
 
 
 def _build_mapping_rows(structure):
-    """Aggregate residues by auth_asym_id, listing the label_asym_ids each
-    auth chain spans. Columns are always ordered auth → label, regardless
-    of which side ``chain_id`` is currently on.
+    """Group residues by their snapshotted auth/label custom attrs.
 
-    Returns ``[(auth_cid, [label_cid, ...sorted, unique]), ...]``.
+    Residues missing either ``auth_asym_id`` or ``label_asym_id`` are
+    excluded from the mapping and counted in the returned ``dropped``
+    number so the caller can emit a correlated warning — a silent
+    drop here would misrepresent the per-side unique counts shown in
+    the log's footer.
+
+    Returns ``(rows, dropped)`` where
+    ``rows = [(auth_cid, [label_cid, ...sorted, unique]), ...]`` sorted
+    by ``auth_cid`` and ``dropped`` is the residue count omitted.
     """
     by_auth: dict = {}
+    dropped = 0
     for residue in structure.residues:
-        a = getattr(residue, AUTH_ATTR, None)
-        l = getattr(residue, LABEL_ATTR, None)
-        if not a or not l:
+        auth = getattr(residue, AUTH_ATTR, None)
+        label = getattr(residue, LABEL_ATTR, None)
+        if not auth or not label:
+            dropped += 1
             continue
-        by_auth.setdefault(a, set()).add(l)
+        by_auth.setdefault(auth, set()).add(label)
 
-    return [(a, sorted(by_auth[a])) for a in sorted(by_auth)]
+    rows = [(a, sorted(by_auth[a])) for a in sorted(by_auth)]
+    return rows, dropped
 
 
 def _build_html_report(
@@ -300,13 +309,22 @@ def _build_html_report(
     ``<tbody>`` carries the auth→label mapping rows (rowspan groupby with
     a centred direction arrow), and ``<tfoot>`` reports the number of
     unique ids on each side.
+
+    Clickable anchors follow ``target`` (the side chain_id matches after
+    the swap): that side uses the standard ``#model/cid`` atom-spec, the
+    other side uses the ``::auth_asym_id='cid'`` / ``::label_asym_id='cid'``
+    custom-attr selector so both columns remain clickable post-swap. When
+    ``structure.atomspec`` is empty, both sides fall back to the
+    custom-attr form — links never silently degrade to plain text.
+
+    Footer counts are computed directly from the residue custom attrs
+    (invariant to swap direction), so they describe the structure rather
+    than the before/after state.
     """
     from chimerax.core.logger import html_table_params
 
     spec = getattr(structure, "atomspec", "") or ""
 
-    # Unique counts on each side are invariant to swap direction; compute
-    # them straight from the residue custom attributes.
     auth_unique = len(
         {
             getattr(r, AUTH_ATTR, None)
@@ -323,25 +341,32 @@ def _build_html_report(
     )
 
     def current_link(cid):
-        """Link that selects residues whose CURRENT chain_id matches."""
-        if not spec:
-            return cid
+        """Link that selects residues via the standard ``#model/cid`` spec.
+
+        Valid only for the side whose id matches ``Residue.chain_id`` after
+        the swap (i.e. ``target``). Falls back to plain text — and the
+        caller substitutes ``attr_link`` for both sides — when the
+        structure exposes no ``atomspec``, so links do not silently break.
+        """
         return f'<a href="cxcmd:select {spec}/{cid}">{cid}</a>'
 
     def attr_link(cid, attr):
-        """Link that selects residues via a swapasym custom attribute,
-        regardless of which side chain_id is currently on."""
+        """Link via a swapasym custom attribute, valid on either swap side."""
         return f'<a href="cxcmd:select ::{attr}=&#39;{cid}&#39;">{cid}</a>'
 
-    # After the swap, chain_id matches the target side. Clickable anchors
-    # use the standard spec for whichever side is current and the
-    # custom-attr selector for the other.
-    if target == "label":
-        auth_anchor = lambda cid: attr_link(cid, AUTH_ATTR)  # noqa: E731
-        label_anchor = current_link
+    from functools import partial
+
+    auth_attr_link = partial(attr_link, attr=AUTH_ATTR)
+    label_attr_link = partial(attr_link, attr=LABEL_ATTR)
+
+    if not spec:
+        # No atomspec means no valid standard selector; keep both sides
+        # clickable through the custom-attr selector instead.
+        auth_anchor, label_anchor = auth_attr_link, label_attr_link
+    elif target == "label":
+        auth_anchor, label_anchor = auth_attr_link, current_link
     else:
-        auth_anchor = current_link
-        label_anchor = lambda cid: attr_link(cid, LABEL_ATTR)  # noqa: E731
+        auth_anchor, label_anchor = current_link, label_attr_link
 
     arrow = "&rarr;" if target == "label" else "&larr;"
 
@@ -499,11 +524,19 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"empty {target_attr} (left on previous side)."
             )
 
+        mapping_rows, dropped = _build_mapping_rows(structure)
+        if dropped:
+            session.logger.warning(
+                f"swapasym: {structure} omitted {dropped} residues from "
+                "the log mapping table (missing auth_asym_id or "
+                "label_asym_id)."
+            )
+
         html = _build_html_report(
             structure=structure,
             current=current,
             target=target,
-            mapping_rows=_build_mapping_rows(structure),
+            mapping_rows=mapping_rows,
         )
         session.logger.info(html, is_html=True)
 

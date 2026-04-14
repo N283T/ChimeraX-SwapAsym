@@ -130,31 +130,46 @@ def test_warns_when_residues_skipped_due_to_empty_label():
     assert "1 residues" in warnings or "1 residue" in warnings
 
 
+def _tfoot_region(html: str) -> str:
+    """Extract the ``<tfoot>…</tfoot>`` substring so tests can scope
+    assertions to the footer and not accidentally match cells from
+    the mapping body."""
+    start = html.index("<tfoot>")
+    end = html.index("</tfoot>") + len("</tfoot>")
+    return html[start:end]
+
+
 def test_info_log_is_single_html_table_with_tfoot_unique_counts():
     """Success log emits exactly one HTML table; the swap header is in
     ``<thead>``, the groupby mapping in ``<tbody>``, and the per-side
-    unique-chain_id counts in ``<tfoot>``. Residue / polymer-chain noise
-    was removed; the directional info comes from the arrow plus the
-    header text."""
+    unique-chain_id counts in ``<tfoot>``."""
     session, _ = _session_with([("A", "A"), ("A", "E"), ("A", "F"), ("B", "B")])
 
     cmd.swapasym(session, mode="label")
 
     assert len(session.logger.html_info_msgs) == 1
     html = session.logger.html_info_msgs[0]
-    # Exactly one <table>.
     assert html.count("<table") == 1
+    # Table skeleton all present; summary header spans all three columns.
+    assert "<thead>" in html
+    assert "<tbody>" in html
+    assert "<tfoot>" in html
+    assert 'colspan="3"' in html
     # Header carries the direction text and column labels.
     assert "auth &rarr; label" in html
     assert "auth_asym_id" in html and "label_asym_id" in html
-    # Footer row labels the unique count.
-    assert "<tfoot>" in html
-    assert "<i>unique</i>" in html
-    # The two residues of chain A share a single auth id but two label
-    # ids, so auth_unique == 2 (A, B) and label_unique == 4 (A, E, F, B).
-    assert "<b>2</b>" in html
-    assert "<b>4</b>" in html
-    # Residue / polymer noise is gone.
+    # Thead column row has exactly three <th> cells (blank middle column),
+    # plus the summary <th colspan="3"> on the preceding row.
+    thead_region = html[html.index("<thead>") : html.index("</thead>")]
+    assert thead_region.count("<th>") == 3  # three unadorned <th> cells
+    assert thead_region.count('<th colspan="3">') == 1
+    # Tfoot asserts — scope to the footer region so we do not false-match
+    # bold cells inside the mapping body.
+    tfoot = _tfoot_region(html)
+    assert "<i>unique</i>" in tfoot
+    # auth_unique (2) appears before label_unique (4) in the footer row.
+    assert tfoot.index("<b>2</b>") < tfoot.index("<b>4</b>")
+    # Noise from earlier iterations is gone.
     assert "residues changed" not in html
     assert "polymer chains" not in html
 
@@ -165,8 +180,8 @@ def test_info_log_mapping_columns_are_fixed_auth_label():
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
     ]
     structure = FakeStructure(residues, atomspec="#1")
     session = FakeSession(models=[structure])
@@ -184,14 +199,15 @@ def test_info_log_mapping_columns_are_fixed_auth_label():
 
 
 def test_info_log_mapping_uses_rowspan_groupby():
-    """The auth cell is merged via ``rowspan`` so each label occupies its
-    own row under a single auth cell — the groupby layout the user asked for."""
+    """Both the auth cell and the arrow cell are rowspan-merged to cover
+    every label row — so a regression dropping the arrow's rowspan would
+    still produce one rowspan=3, but break the groupby visually."""
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
-        FakeResidue("A", "F", polymer=False, name="HOH"),
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+        FakeResidue("A", "F", polymer=False),
     ]
     structure = FakeStructure(residues, atomspec="#1")
     session = FakeSession(models=[structure])
@@ -199,18 +215,18 @@ def test_info_log_mapping_uses_rowspan_groupby():
     cmd.swapasym(session, mode="label")
 
     html = session.logger.html_info_msgs[0]
-    # One rowspan=3 cell for auth A covering labels A, E, F.
-    assert 'rowspan="3"' in html
+    # Two rowspan="3" cells (auth + arrow) covering labels A, E, F.
+    assert html.count('rowspan="3"') == 2
 
 
-def test_info_log_clickable_cells_follow_current_chain_id_side():
-    """Post-auth→label swap: label cells link via standard spec (#1/X),
-    auth cells link via the ``::auth_asym_id='X'`` custom selector."""
+def test_info_log_clickable_cells_follow_current_chain_id_side_forward():
+    """After auth→label, label cells link via ``#1/X`` (current) and auth
+    cells link via ``::auth_asym_id='X'`` (other side)."""
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
     ]
     structure = FakeStructure(residues, atomspec="#1")
     session = FakeSession(models=[structure])
@@ -220,6 +236,58 @@ def test_info_log_clickable_cells_follow_current_chain_id_side():
     html = session.logger.html_info_msgs[0]
     assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
     assert "cxcmd:select #1/E" in html
+    # Auth cell is wrapped in <b>; it must use the custom-attr selector
+    # rather than the standard spec after auth→label.
+    assert '<b><a href="cxcmd:select #1/' not in html
+
+
+def test_info_log_clickable_cells_follow_current_chain_id_side_reverse():
+    """After label→auth, auth cells link via ``#1/X`` (current) and label
+    cells link via ``::label_asym_id='X'`` (other side). Mirror of the
+    forward case."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+    session.logger.html_info_msgs.clear()
+    session.logger.info_msgs.clear()
+    cmd.swapasym(session, mode="auth")
+
+    html = session.logger.html_info_msgs[0]
+    assert "cxcmd:select ::label_asym_id=&#39;E&#39;" in html
+    # The auth cell (bolded) now uses the standard spec.
+    assert '<b><a href="cxcmd:select #1/A">A</a></b>' in html
+    # Label side must NOT use the standard spec after label→auth.
+    assert "cxcmd:select #1/E" not in html
+
+
+def test_info_log_clickable_cells_fall_back_to_attr_when_no_atomspec():
+    """Structures with empty ``atomspec`` have no valid standard selector;
+    both sides must still be clickable via the custom-attr selector."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
+    ]
+    structure = FakeStructure(residues, atomspec="")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    # Both sides use custom-attr selectors when atomspec is absent.
+    assert "cxcmd:select ::auth_asym_id=&#39;A&#39;" in html
+    assert "cxcmd:select ::label_asym_id=&#39;E&#39;" in html
+    # The broken ``#/X`` spec must not appear.
+    assert "cxcmd:select /A" not in html
+    assert "cxcmd:select /E" not in html
 
 
 def test_info_log_mapping_has_direction_arrow():
@@ -230,8 +298,8 @@ def test_info_log_mapping_has_direction_arrow():
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
-        FakeResidue("A", "A", polymer=True, name="VAL"),
-        FakeResidue("A", "E", polymer=False, name="HEM"),
+        FakeResidue("A", "A", polymer=True),
+        FakeResidue("A", "E", polymer=False),
     ]
     structure = FakeStructure(residues, atomspec="#1")
     session = FakeSession(models=[structure])
