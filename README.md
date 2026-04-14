@@ -30,13 +30,23 @@ swapasym [structures]  [mode  auto|label|auth]
 | `mode label` | Force `chain_id := label_asym_id`. |
 | `mode auth` | Force `chain_id := auth_asym_id` (original PDB chain). |
 
-After the first call the bundle attaches two custom Residue attributes
-usable from atom-specs:
+The bundle registers two custom Residue attributes usable from atom-specs:
 
 ```
 select ::auth_asym_id="A"
 select ::label_asym_id="E"
 ```
+
+Attribute values are populated automatically on every mmCIF structure
+the moment it opens, so the selectors work before you ever run
+`swapasym`. Non-mmCIF structures (plain `.pdb`) are silently skipped;
+`swapasym` will still raise a UserError if you invoke it explicitly on
+one of them.
+
+> **Note.** `label_asym_id` is read from `Residue.mmcif_chain_id`, which
+> ChimeraX limits to 4 characters. For typical PDB entries this matches
+> `_atom_site.label_asym_id` exactly; for mmCIF files that use longer
+> label ids the auto-populated value will be truncated.
 
 ## Example
 
@@ -81,7 +91,7 @@ the full command reference.
 ### From a pre-built wheel (ChimeraX command line)
 
 ```
-toolshed install /path/to/ChimeraX_SwapAsym-0.1.0-py3-none-any.whl
+toolshed install /path/to/ChimeraX_SwapAsym-0.2.0-py3-none-any.whl
 ```
 
 ### From the shell (headless)

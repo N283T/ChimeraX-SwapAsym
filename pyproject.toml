@@ -4,7 +4,7 @@ build-backend = "chimerax.bundle_builder.cx_pep517"
 
 [project]
 name = "ChimeraX-SwapAsym"
-version = "0.1.0"
+version = "0.2.0"
 description = "Swap chain_id between mmCIF auth_asym_id and label_asym_id"
 license = { text = "MIT" }
 dynamic = ["classifiers", "requires-python"]

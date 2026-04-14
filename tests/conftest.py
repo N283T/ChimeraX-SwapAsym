@@ -36,6 +36,8 @@ def _install_stubs() -> None:
     fake_atomic = MagicMock()
     fake_commands = MagicMock()
     fake_errors = MagicMock()
+    fake_models = MagicMock()
+    fake_models.ADD_MODELS = "add models"
 
     fake_atomic.Residue = MagicMock()
     fake_atomic.Residue.register_attr = MagicMock()
@@ -51,6 +53,7 @@ def _install_stubs() -> None:
     sys.modules["chimerax.core"] = fake_core
     sys.modules["chimerax.core.commands"] = fake_commands
     sys.modules["chimerax.core.errors"] = fake_errors
+    sys.modules["chimerax.core.models"] = fake_models
     sys.modules["chimerax.atomic"] = fake_atomic
 
 
@@ -78,7 +81,9 @@ def reset_module_state():
     import swapasym_cmd as cmd
 
     cmd._attrs_registered_sessions.clear()
+    cmd._add_models_handlers.clear()
     cmd.Residue.register_attr.reset_mock()
     cmd.AtomicStructure.register_attr.reset_mock()
     yield
     cmd._attrs_registered_sessions.clear()
+    cmd._add_models_handlers.clear()

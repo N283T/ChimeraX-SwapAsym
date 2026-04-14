@@ -10,6 +10,7 @@ The custom attributes are registered via ``Residue.register_attr`` so they
 become addressable from ChimeraX atom-specs, e.g. ``sel ::label_asym_id="E"``.
 """
 
+import traceback
 from weakref import WeakSet
 
 from chimerax.atomic import AtomicStructure, AtomicStructuresArg, Residue
@@ -26,6 +27,12 @@ MODES = ("auto", "label", "auth")
 # also what makes the attributes survive session save/load.
 _attrs_registered_sessions: WeakSet = WeakSet()
 
+# Session -> ADD_MODELS handler id, so ``uninstall`` can remove the handler
+# when the bundle is unloaded. Regular dict because ChimeraX session objects
+# are not weakly referenceable on all platforms; entries are removed in
+# ``uninstall``.
+_add_models_handlers: dict = {}
+
 
 def _register_attrs(session):
     """Register custom Residue and Structure attributes once per session.
@@ -41,6 +48,73 @@ def _register_attrs(session):
     Residue.register_attr(session, LABEL_ATTR, "SwapAsym", attr_type=str)
     AtomicStructure.register_attr(session, SNAPSHOT_FLAG, "SwapAsym", attr_type=bool)
     _attrs_registered_sessions.add(session)
+
+
+def _try_populate(session, model):
+    """Snapshot auth/label ids on a newly-added model, silent on non-mmCIF.
+
+    ``_snapshot_structure`` raises UserError for structures loaded without
+    mmcif_chain_id data (plain .pdb, for example). In the auto-populate
+    context we want that to be a silent no-op: the bundle should not
+    complain about every non-mmCIF file the user opens. When ``swapasym``
+    is later invoked explicitly on such a structure, the same UserError
+    will surface with its full message.
+    """
+    if not isinstance(model, AtomicStructure):
+        return
+    try:
+        _snapshot_structure(model)
+    except UserError:
+        return
+    except Exception:
+        session.logger.warning(
+            f"swapasym: failed to auto-populate {getattr(model, 'name', model)}:\n"
+            f"{traceback.format_exc()}"
+        )
+
+
+def _on_add_models(session, trigger_name, models):
+    for model in models:
+        _try_populate(session, model)
+
+
+def install(session):
+    """Register attributes and subscribe to ADD_MODELS.
+
+    Called from ``BundleAPI.initialize``. After install, every newly
+    opened atomic structure gets auth_asym_id / label_asym_id populated
+    automatically, so ``sel ::label_asym_id="E"`` and the like work
+    without the user having to run ``swapasym`` first.
+    """
+    _register_attrs(session)
+    if session in _add_models_handlers:
+        return
+    from chimerax.core.models import ADD_MODELS
+
+    handler_id = session.triggers.add_handler(
+        ADD_MODELS,
+        lambda trigger_name, models: _on_add_models(session, trigger_name, models),
+    )
+    _add_models_handlers[session] = handler_id
+
+    # Populate any structures that were already open when the bundle
+    # initializes (e.g. session restore or manual re-init).
+    for model in list(session.models):
+        _try_populate(session, model)
+
+
+def uninstall(session):
+    """Remove the ADD_MODELS subscription. Called from BundleAPI.finish."""
+    handler_id = _add_models_handlers.pop(session, None)
+    if handler_id is None:
+        return
+    try:
+        session.triggers.remove_handler(handler_id)
+    except Exception:
+        session.logger.info(
+            f"swapasym: remove_handler failed during uninstall:\n"
+            f"{traceback.format_exc()}"
+        )
 
 
 def _iter_target_structures(session, structures):

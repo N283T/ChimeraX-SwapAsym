@@ -116,10 +116,33 @@ class FakeLogger:
         self.warning_msgs.append(msg)
 
 
+class FakeTriggers:
+    """Minimal stand-in for ``session.triggers`` used by install/uninstall."""
+
+    def __init__(self):
+        self._handlers: dict[int, tuple] = {}
+        self._next_id = 1
+
+    def add_handler(self, trigger_name: str, callback):
+        hid = self._next_id
+        self._next_id += 1
+        self._handlers[hid] = (trigger_name, callback)
+        return hid
+
+    def remove_handler(self, handler_id) -> None:
+        self._handlers.pop(handler_id, None)
+
+    def fire(self, trigger_name: str, payload):
+        for tname, callback in list(self._handlers.values()):
+            if tname == trigger_name:
+                callback(tname, payload)
+
+
 class FakeSession:
     def __init__(self, models: Optional[list[FakeStructure]] = None):
         self.models = list(models or [])
         self.logger = FakeLogger()
+        self.triggers = FakeTriggers()
 
 
 def residues_from_pairs(
