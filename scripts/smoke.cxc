@@ -1,0 +1,10 @@
+# Smoke test for ChimeraX-SwapAsym
+# Run with: echi run --script scripts/smoke.cxc
+
+open 1fat
+
+info chains
+swapasym
+info chains
+swapasym mode auth
+info chains
