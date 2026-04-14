@@ -168,6 +168,83 @@ def test_info_log_added_table_has_type_column_and_cxcmd_link():
     assert 'href="cxcmd:select #1/E"' in html
 
 
+def test_info_log_has_mapping_table():
+    """Every swap should include a before/after mapping table rooted at
+    auth_asym_id so the user can see which label ids a given auth chain
+    redistributes to."""
+    from _fakes import FakeResidue, FakeStructure
+
+    residues = [
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
+        FakeResidue("B", "B", polymer=True, name="VAL"),
+        FakeResidue("B", "F", polymer=False, name="HOH"),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    assert "auth_asym_id" in html and "label_asym_id" in html
+    # Row grouped under auth A should mention both label A (polymer) and E (HEM)
+    assert "A" in html and "E" in html
+    # Row grouped under auth B should mention label B and F (HOH)
+    assert "F" in html
+
+
+def test_info_log_entity_description_in_details(monkeypatch):
+    """When mmCIF struct_asym/entity tables are available, the details
+    cell must include the entity description in italics."""
+    import sys
+    from unittest.mock import MagicMock
+
+    from _fakes import FakeResidue, FakeStructure
+
+    # Build a fake chimerax.mmcif module that hands out mapping tables.
+    class _FakeTable:
+        def __init__(self, data):
+            self.data = data
+
+        def mapping(self, key_col, val_col):
+            return dict(self.data[(key_col, val_col)])
+
+    struct_asym = _FakeTable({("id", "entity_id"): [("A", "1"), ("E", "2")]})
+    entity = _FakeTable(
+        {
+            ("id", "pdbx_description"): [("1", "Globin alpha"), ("2", "HEME")],
+            ("id", "type"): [("1", "polymer"), ("2", "non-polymer")],
+        }
+    )
+
+    def _fake_get(structure, names):
+        # The bundle now asks for tables one at a time; return the
+        # corresponding single-element tuple.
+        if names == ["struct_asym"]:
+            return (struct_asym,)
+        if names == ["entity"]:
+            return (entity,)
+        return tuple(None for _ in names)
+
+    fake_mmcif = MagicMock()
+    fake_mmcif.get_mmcif_tables_from_metadata = _fake_get
+    monkeypatch.setitem(sys.modules, "chimerax.mmcif", fake_mmcif)
+
+    residues = [
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
+    ]
+    structure = FakeStructure(residues, atomspec="#1")
+    session = FakeSession(models=[structure])
+
+    cmd.swapasym(session, mode="label")
+
+    html = session.logger.html_info_msgs[0]
+    # Details cell carries the entity description in <i>.
+    assert "<i>HEME</i>" in html
+    assert "<i>Globin alpha</i>" in html
+
+
 def test_info_log_removed_row_when_swapping_back_to_auth():
     """Reverse swap: the label-only ids should appear in a 'removed' row
     (without a cxcmd link, since the id no longer exists post-swap)."""

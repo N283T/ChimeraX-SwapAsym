@@ -270,28 +270,156 @@ def _current_mode(structure):
     return "mixed"
 
 
-def _summarize_chain_ids(structure):
-    """Map each unique chain_id to {"names": set, "polymer": bool, "count": int}.
+def _load_entity_table(structure):
+    """Fetch the ``entity`` CIFTable, falling back to the source file.
 
-    Uses the residue-level ``chain_id`` (what the user actually sees in
-    atom-specs), not ``structure.chains`` which only counts polymer chains.
+    ChimeraX only loads a fixed set of mmCIF categories into ``metadata``
+    at open time; ``entity`` usually isn't among them. When metadata
+    doesn't carry the table, re-parse it from the structure's source
+    .cif file if possible.
+    """
+    try:
+        from chimerax.mmcif import get_mmcif_tables_from_metadata
+    except ImportError:
+        return None
+    try:
+        (entity,) = get_mmcif_tables_from_metadata(structure, ["entity"])
+    except Exception:
+        entity = None
+    if entity is not None:
+        return entity
+
+    from pathlib import Path
+
+    filename = getattr(structure, "filename", None)
+    if not filename:
+        return None
+    path = Path(filename)
+    if not path.is_file() or path.suffix.lower() not in {".cif", ".mmcif"}:
+        return None
+    try:
+        from chimerax.mmcif import get_cif_tables
+    except ImportError:
+        return None
+    try:
+        (entity,) = get_cif_tables(str(path), ["entity"])
+    except Exception:
+        return None
+    return entity
+
+
+def _build_entity_map(structure):
+    """Return {label_asym_id: (entity_id, description, entity_type)}.
+
+    Uses ``struct_asym`` from metadata for the label→entity mapping and
+    ``entity`` (via metadata or source-file fallback) for the description
+    and type. Returns ``{}`` if either piece is unavailable.
+    """
+    try:
+        from chimerax.mmcif import get_mmcif_tables_from_metadata
+    except ImportError:
+        return {}
+    try:
+        (struct_asym,) = get_mmcif_tables_from_metadata(structure, ["struct_asym"])
+    except Exception:
+        return {}
+    if not struct_asym:
+        return {}
+    try:
+        label_to_entity = struct_asym.mapping("id", "entity_id")
+    except Exception:
+        return {}
+
+    entity = _load_entity_table(structure)
+    entity_to_desc: dict = {}
+    entity_to_type: dict = {}
+    if entity is not None:
+        try:
+            entity_to_desc = entity.mapping("id", "pdbx_description")
+        except Exception:
+            entity_to_desc = {}
+        try:
+            entity_to_type = entity.mapping("id", "type")
+        except Exception:
+            entity_to_type = {}
+
+    return {
+        label: (
+            ent_id,
+            entity_to_desc.get(ent_id, ""),
+            entity_to_type.get(ent_id, ""),
+        )
+        for label, ent_id in label_to_entity.items()
+    }
+
+
+def _summarize_chain_ids(structure, entity_map=None):
+    """Map each unique chain_id to a summary dict.
+
+    Entries carry residue ``names``, ``polymer`` flag, residue ``count``,
+    and (when the entity map is available) the set of ``entities`` reached
+    via the residue's ``label_asym_id`` custom attribute.
     """
     info: dict = {}
     for residue in structure.residues:
         cid = residue.chain_id
-        entry = info.setdefault(cid, {"names": set(), "polymer": False, "count": 0})
+        entry = info.setdefault(
+            cid,
+            {"names": set(), "polymer": False, "count": 0, "entities": set()},
+        )
         entry["names"].add(residue.name)
         entry["count"] += 1
         if residue.chain is not None:
             entry["polymer"] = True
+        if entity_map:
+            label = getattr(residue, LABEL_ATTR, None)
+            if label and label in entity_map:
+                entry["entities"].add(entity_map[label])
     return info
 
 
-def _types_cell(names):
-    names = sorted(names)
+def _details_cell(entry, max_desc_len=60):
+    """Render the detail cell: residue types + entity description when known."""
+    names = sorted(entry["names"])
     if len(names) <= 3:
-        return ", ".join(names)
-    return f"{', '.join(names[:3])}, ... ({len(names)} types)"
+        names_text = ", ".join(names)
+    else:
+        names_text = f"{', '.join(names[:3])}, ... ({len(names)} types)"
+
+    entities = entry.get("entities") or set()
+    descriptions = sorted({desc for (_, desc, _) in entities if desc})
+    if not descriptions:
+        return names_text
+
+    if len(descriptions) == 1:
+        desc = descriptions[0]
+        if len(desc) > max_desc_len:
+            desc = desc[: max_desc_len - 1] + "…"
+        return f"{names_text} &middot; <i>{desc}</i>"
+    return f"{names_text} &middot; <i>{len(descriptions)} entities</i>"
+
+
+def _build_mapping_rows(structure):
+    """Group residues by (auth_asym_id, label_asym_id) and sort by auth.
+
+    Returns ``[(auth_cid, [(label_cid, count, [residue names]), ...])]``.
+    Residues missing either custom attribute are skipped silently.
+    """
+    groups: dict = {}
+    for residue in structure.residues:
+        a = getattr(residue, AUTH_ATTR, None)
+        l = getattr(residue, LABEL_ATTR, None)
+        if not a or not l:
+            continue
+        entry = groups.setdefault((a, l), {"count": 0, "names": set()})
+        entry["count"] += 1
+        entry["names"].add(residue.name)
+
+    by_from: dict = {}
+    for (a, l), entry in groups.items():
+        by_from.setdefault(a, []).append((l, entry["count"], sorted(entry["names"])))
+
+    return [(a, sorted(by_from[a])) for a in sorted(by_from)]
 
 
 def _build_html_report(
@@ -309,8 +437,10 @@ def _build_html_report(
     after_summary,
     added,
     removed,
+    mapping_rows,
+    entity_map,
 ):
-    """Assemble the per-structure HTML table logged after each swap."""
+    """Assemble the per-structure HTML tables logged after each swap."""
     from chimerax.core.logger import html_table_params
 
     residues_cell = f"{changed}/{total_residues} changed"
@@ -324,6 +454,7 @@ def _build_html_report(
             return f'<a href="cxcmd:select {spec}/{cid}">{cid}</a>'
         return cid
 
+    # --- Summary table -------------------------------------------------
     lines = [f"<table {html_table_params}>"]
     lines.append("  <thead>")
     lines.append(
@@ -344,39 +475,79 @@ def _build_html_report(
     lines.append("  </tbody>")
     lines.append("</table>")
 
-    if not added and not removed:
-        return "\n".join(lines)
+    # --- Added / removed detail table ---------------------------------
+    if added or removed:
+        lines.append(f"<table {html_table_params}>")
+        lines.append("  <thead>")
+        lines.append(
+            "    <tr><th>change</th><th>chain_id</th>"
+            "<th>residues</th><th>details</th></tr>"
+        )
+        lines.append("  </thead>")
+        lines.append("  <tbody>")
+        for cid in sorted(added):
+            entry = after_summary[cid]
+            lines.append(
+                "    <tr>"
+                '<td style="color:#1b7f3a"><b>added</b></td>'
+                f"<td>{chain_link(cid, clickable=True)}</td>"
+                f'<td style="text-align:right">{entry["count"]}</td>'
+                f"<td>{_details_cell(entry)}</td>"
+                "</tr>"
+            )
+        for cid in sorted(removed):
+            entry = before_summary[cid]
+            lines.append(
+                "    <tr>"
+                '<td style="color:#888"><b>removed</b></td>'
+                # Removed chain_ids no longer exist on the current side.
+                f"<td>{cid}</td>"
+                f'<td style="text-align:right">{entry["count"]}</td>'
+                f"<td>{_details_cell(entry)}</td>"
+                "</tr>"
+            )
+        lines.append("  </tbody>")
+        lines.append("</table>")
 
-    lines.append(f"<table {html_table_params}>")
-    lines.append("  <thead>")
-    lines.append(
-        "    <tr><th>change</th><th>chain_id</th><th>residues</th><th>types</th></tr>"
-    )
-    lines.append("  </thead>")
-    lines.append("  <tbody>")
-    for cid in sorted(added):
-        entry = after_summary[cid]
+    # --- Auth -> label mapping table ----------------------------------
+    if mapping_rows:
+        # Link targets the side that currently exists on the structure.
+        link_to_auth = target == "auth"
+        lines.append(f"<table {html_table_params}>")
+        lines.append("  <thead>")
         lines.append(
-            "    <tr>"
-            '<td style="color:#1b7f3a"><b>added</b></td>'
-            f"<td>{chain_link(cid, clickable=True)}</td>"
-            f'<td style="text-align:right">{entry["count"]}</td>'
-            f"<td>{_types_cell(entry['names'])}</td>"
-            "</tr>"
+            "    <tr><th>auth_asym_id</th><th>label_asym_id "
+            "(residues, details)</th></tr>"
         )
-    for cid in sorted(removed):
-        entry = before_summary[cid]
-        lines.append(
-            "    <tr>"
-            '<td style="color:#888"><b>removed</b></td>'
-            # Removed chain_ids no longer exist on the current side, so no link.
-            f"<td>{cid}</td>"
-            f'<td style="text-align:right">{entry["count"]}</td>'
-            f"<td>{_types_cell(entry['names'])}</td>"
-            "</tr>"
-        )
-    lines.append("  </tbody>")
-    lines.append("</table>")
+        lines.append("  </thead>")
+        lines.append("  <tbody>")
+        for auth_cid, groups in mapping_rows:
+            auth_text = chain_link(auth_cid, clickable=link_to_auth)
+            cells = []
+            for label_cid, count, names in groups:
+                link = chain_link(label_cid, clickable=not link_to_auth)
+                names_text = (
+                    ", ".join(names)
+                    if len(names) <= 3
+                    else (f"{', '.join(names[:3])} +{len(names) - 3}")
+                )
+                desc = ""
+                if entity_map and label_cid in entity_map:
+                    d = entity_map[label_cid][1]
+                    if d:
+                        if len(d) > 40:
+                            d = d[:39] + "…"
+                        desc = f" <i>{d}</i>"
+                cells.append(f"{link} ({count} {names_text}){desc}")
+            lines.append(
+                "    <tr>"
+                f'<td style="vertical-align:top"><b>{auth_text}</b></td>'
+                f"<td>{'<br>'.join(cells)}</td>"
+                "</tr>"
+            )
+        lines.append("  </tbody>")
+        lines.append("</table>")
+
     return "\n".join(lines)
 
 
@@ -477,7 +648,8 @@ def swapasym(session, structures=None, mode="auto", color=False):
             ) from exc
         current = _current_mode(structure)
         num_polymer_before = structure.num_chains
-        before_summary = _summarize_chain_ids(structure)
+        entity_map = _build_entity_map(structure)
+        before_summary = _summarize_chain_ids(structure, entity_map)
         before_ids = set(before_summary)
 
         if current == "identical":
@@ -496,11 +668,12 @@ def swapasym(session, structures=None, mode="auto", color=False):
                 f"empty {target_attr} (left on previous side)."
             )
 
-        after_summary = _summarize_chain_ids(structure)
+        after_summary = _summarize_chain_ids(structure, entity_map)
         after_ids = set(after_summary)
         added = after_ids - before_ids
         removed = before_ids - after_ids
         total_residues = len(structure.residues)
+        mapping_rows = _build_mapping_rows(structure)
 
         html = _build_html_report(
             structure=structure,
@@ -517,6 +690,8 @@ def swapasym(session, structures=None, mode="auto", color=False):
             after_summary=after_summary,
             added=added,
             removed=removed,
+            mapping_rows=mapping_rows,
+            entity_map=entity_map,
         )
         session.logger.info(html, is_html=True)
 
