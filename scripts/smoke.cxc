@@ -1,0 +1,26 @@
+# Smoke test for ChimeraX-SwapAsym
+# Run with: echi run --script scripts/smoke.cxc
+
+open 4hhb
+
+# Before: 4 polymer chains (A B C D). Non-polymer residues (HEM, PO4,
+# waters) share those author chain_ids but carry distinct label_asym_ids.
+info chains
+
+# Toggle to label side. Polymer chains stay A-D, but non-polymer residues
+# get their own chain_ids (E..N) from the mmCIF label_asym_id.
+swapasym
+
+# Selection works via the standard atom-spec because chain_id now holds
+# the label values.
+sel /E,F,G,H,I,J      # all HEM and PO4
+sel clear
+
+# And via the custom attributes registered by the bundle, independent of
+# the current chain_id state.
+sel ::label_asym_id="K"   # waters in chain K
+sel clear
+
+# Restore
+swapasym mode auth
+info chains

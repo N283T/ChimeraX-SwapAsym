@@ -1,0 +1,29 @@
+[build-system]
+requires = ["ChimeraX-BundleBuilder"]
+build-backend = "chimerax.bundle_builder.cx_pep517"
+
+[project]
+name = "ChimeraX-SwapAsym"
+version = "0.1.0"
+description = "Swap chain_id between mmCIF auth_asym_id and label_asym_id"
+license = { text = "MIT" }
+dynamic = ["classifiers", "requires-python"]
+
+[project.urls]
+Homepage = "https://github.com/N283T/ChimeraX-SwapAsym"
+
+[chimerax]
+package = "chimerax.swapasym"
+pure = true
+custom-init = true
+min-session-version = 1
+max-session-version = 1
+min-chimerax-version = "1.9"
+categories = ["Structure Analysis"]
+
+[chimerax.command.swapasym]
+category = "Structure Analysis"
+description = "Swap chain_id between auth_asym_id and label_asym_id"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
