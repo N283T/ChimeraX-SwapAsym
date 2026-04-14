@@ -56,34 +56,58 @@ try to use it. Reload the structure from a `.cif` file to proceed.
 
 ## Installation
 
-### From source (development)
+### From source (command line)
 
-Using [echidna](https://github.com/N283T/echidna) (`echi`), a thin CLI for
-ChimeraX bundle development:
-
-```bash
-echi build
-echi install
-```
-
-Or without the helper, using ChimeraX directly:
+Build and install from a clone of this repository without launching the
+ChimeraX GUI:
 
 ```bash
-ChimeraX --nogui --exit --cmd 'devel install .'
+ChimeraX --nogui --exit --cmd 'devel install . exit true'
 ```
 
-### From wheel
+`devel install` builds the wheel if necessary and installs it into the
+running ChimeraX profile. `exit true` makes ChimeraX quit as soon as the
+install finishes; the leading `--exit` guarantees exit even on failure
+(see `help devel` inside ChimeraX for the full command reference).
+
+On macOS the `ChimeraX` launcher lives at
+`/Applications/ChimeraX-<version>.app/Contents/bin/ChimeraX`; add it to
+your `$PATH` or invoke it directly.
+
+### From source (inside ChimeraX)
+
+From the ChimeraX command line:
+
+```
+devel install /path/to/ChimeraX-SwapAsym
+```
+
+### From a pre-built wheel
 
 ```bash
 ChimeraX --nogui --exit --cmd 'toolshed install dist/ChimeraX_SwapAsym-0.1.0-py3-none-any.whl'
 ```
 
+### Using echidna (optional helper)
+
+[echidna](https://github.com/N283T/echidna) (`echi`) wraps the same
+commands for faster iteration during development:
+
+```bash
+echi build      # build wheel (wraps `devel build`)
+echi install    # install to ChimeraX (wraps `devel install`)
+echi run --script scripts/smoke.cxc
+```
+
 ## Development
 
 ```bash
-echi build                          # Build wheel
-echi install                        # Install to ChimeraX
-echi run --script scripts/smoke.cxc # Install and run smoke script
+# Run the pytest suite (no ChimeraX runtime needed)
+uv run --no-project --with pytest pytest tests/
+
+# Rebuild + reinstall + run smoke script
+ChimeraX --nogui --exit --cmd 'devel install . exit true' \
+  && ChimeraX scripts/smoke.cxc
 ```
 
 ### Tests
