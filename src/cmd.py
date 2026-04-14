@@ -271,7 +271,7 @@ def _current_mode(structure):
 
 
 def _summarize_chain_ids(structure):
-    """Map each unique chain_id to {"names": set(residue names), "polymer": bool}.
+    """Map each unique chain_id to {"names": set, "polymer": bool, "count": int}.
 
     Uses the residue-level ``chain_id`` (what the user actually sees in
     atom-specs), not ``structure.chains`` which only counts polymer chains.
@@ -279,25 +279,105 @@ def _summarize_chain_ids(structure):
     info: dict = {}
     for residue in structure.residues:
         cid = residue.chain_id
-        entry = info.setdefault(cid, {"names": set(), "polymer": False})
+        entry = info.setdefault(cid, {"names": set(), "polymer": False, "count": 0})
         entry["names"].add(residue.name)
+        entry["count"] += 1
         if residue.chain is not None:
             entry["polymer"] = True
     return info
 
 
-def _describe_chain_ids(summary, cids):
-    """Render 'D [HEM], E [HOH], F [NAG, MAN]' style list for the given ids."""
-    parts = []
-    for cid in sorted(cids):
-        names = sorted(summary.get(cid, {}).get("names", set()))
-        if len(names) == 1:
-            parts.append(f"{cid} [{names[0]}]")
-        elif len(names) <= 3:
-            parts.append(f"{cid} [{', '.join(names)}]")
-        else:
-            parts.append(f"{cid} [{len(names)} residue types]")
-    return ", ".join(parts)
+def _types_cell(names):
+    names = sorted(names)
+    if len(names) <= 3:
+        return ", ".join(names)
+    return f"{', '.join(names[:3])}, ... ({len(names)} types)"
+
+
+def _build_html_report(
+    structure,
+    current,
+    target,
+    changed,
+    skipped,
+    total_residues,
+    num_polymer_before,
+    num_polymer_after,
+    before_ids,
+    after_ids,
+    before_summary,
+    after_summary,
+    added,
+    removed,
+):
+    """Assemble the per-structure HTML table logged after each swap."""
+    from chimerax.core.logger import html_table_params
+
+    residues_cell = f"{changed}/{total_residues} changed"
+    if skipped:
+        residues_cell += f", {skipped} skipped"
+
+    spec = getattr(structure, "atomspec", "") or ""
+
+    def chain_link(cid, clickable):
+        if clickable and spec:
+            return f'<a href="cxcmd:select {spec}/{cid}">{cid}</a>'
+        return cid
+
+    lines = [f"<table {html_table_params}>"]
+    lines.append("  <thead>")
+    lines.append(
+        f'    <tr><th colspan="2">swapasym: {structure} '
+        f"<code>{current} &rarr; {target}</code></th></tr>"
+    )
+    lines.append("  </thead>")
+    lines.append("  <tbody>")
+    lines.append(f"    <tr><td>residues</td><td>{residues_cell}</td></tr>")
+    lines.append(
+        "    <tr><td>polymer chains</td>"
+        f"<td>{num_polymer_before} &rarr; {num_polymer_after}</td></tr>"
+    )
+    lines.append(
+        "    <tr><td>unique chain_ids</td>"
+        f"<td>{len(before_ids)} &rarr; {len(after_ids)}</td></tr>"
+    )
+    lines.append("  </tbody>")
+    lines.append("</table>")
+
+    if not added and not removed:
+        return "\n".join(lines)
+
+    lines.append(f"<table {html_table_params}>")
+    lines.append("  <thead>")
+    lines.append(
+        "    <tr><th>change</th><th>chain_id</th><th>residues</th><th>types</th></tr>"
+    )
+    lines.append("  </thead>")
+    lines.append("  <tbody>")
+    for cid in sorted(added):
+        entry = after_summary[cid]
+        lines.append(
+            "    <tr>"
+            '<td style="color:#1b7f3a"><b>added</b></td>'
+            f"<td>{chain_link(cid, clickable=True)}</td>"
+            f'<td style="text-align:right">{entry["count"]}</td>'
+            f"<td>{_types_cell(entry['names'])}</td>"
+            "</tr>"
+        )
+    for cid in sorted(removed):
+        entry = before_summary[cid]
+        lines.append(
+            "    <tr>"
+            '<td style="color:#888"><b>removed</b></td>'
+            # Removed chain_ids no longer exist on the current side, so no link.
+            f"<td>{cid}</td>"
+            f'<td style="text-align:right">{entry["count"]}</td>'
+            f"<td>{_types_cell(entry['names'])}</td>"
+            "</tr>"
+        )
+    lines.append("  </tbody>")
+    lines.append("</table>")
+    return "\n".join(lines)
 
 
 def _apply_side(structure, target_attr):
@@ -422,20 +502,23 @@ def swapasym(session, structures=None, mode="auto", color=False):
         removed = before_ids - after_ids
         total_residues = len(structure.residues)
 
-        lines = [f"swapasym: {structure} {current} -> {target}"]
-        tail = f"residues: {changed}/{total_residues} changed"
-        if skipped:
-            tail += f", {skipped} skipped"
-        lines.append(f"  {tail}")
-        lines.append(
-            f"  polymer chains:   {num_polymer_before} -> {structure.num_chains}"
+        html = _build_html_report(
+            structure=structure,
+            current=current,
+            target=target,
+            changed=changed,
+            skipped=skipped,
+            total_residues=total_residues,
+            num_polymer_before=num_polymer_before,
+            num_polymer_after=structure.num_chains,
+            before_ids=before_ids,
+            after_ids=after_ids,
+            before_summary=before_summary,
+            after_summary=after_summary,
+            added=added,
+            removed=removed,
         )
-        lines.append(f"  unique chain_ids: {len(before_ids)} -> {len(after_ids)}")
-        if added:
-            lines.append(f"    added:   {_describe_chain_ids(after_summary, added)}")
-        if removed:
-            lines.append(f"    removed: {_describe_chain_ids(before_summary, removed)}")
-        session.logger.info("\n".join(lines))
+        session.logger.info(html, is_html=True)
 
     if color and targets:
         spec = " ".join(s.atomspec for s in targets)

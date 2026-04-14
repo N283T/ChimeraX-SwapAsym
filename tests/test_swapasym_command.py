@@ -130,65 +130,66 @@ def test_warns_when_residues_skipped_due_to_empty_label():
     assert "1 residues" in warnings or "1 residue" in warnings
 
 
-def test_info_log_format_shows_polymer_and_residue_level_counts():
-    """Success log must include mode transition, residue change ratio, the
-    polymer chain count delta, and the residue-level unique chain_id delta
-    — users need all three to understand what the swap did."""
+def test_info_log_is_html_table_with_summary_rows():
+    """Success log must be emitted as HTML (is_html=True) and include
+    rows for residues / polymer chains / unique chain_ids."""
     session, _ = _session_with([("A", "A"), ("A", "E"), ("A", "F"), ("B", "B")])
 
     cmd.swapasym(session, mode="label")
 
-    info = " ".join(session.logger.info_msgs)
-    assert "auth -> label" in info
-    assert "residues:" in info and "changed" in info
-    assert "polymer chains:" in info
-    assert "unique chain_ids:" in info
+    assert len(session.logger.html_info_msgs) == 1
+    html = session.logger.html_info_msgs[0]
+    assert "<table" in html
+    assert "auth &rarr; label" in html
+    assert "residues" in html
+    assert "polymer chains" in html
+    assert "unique chain_ids" in html
 
 
-def test_info_log_lists_added_chain_ids_with_residue_types():
-    """When swapping to label, newly-appearing chain_ids should be listed
-    in the log with the residue-type annotation (e.g. 'E [HEM]')."""
-    # Polymer chain A=A; one ligand residue in A with label E.
+def test_info_log_added_table_has_type_column_and_cxcmd_link():
+    """When swapping to label, newly-appearing chain_ids should appear in
+    a second HTML table row tagged 'added', with a residue-type cell and
+    a clickable ``cxcmd:select`` link for the chain id."""
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
-        FakeResidue("A", "A", polymer=True),
-        FakeResidue("A", "A", polymer=True),
-        FakeResidue("A", "E", polymer=False),  # ligand; becomes E on label side
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "A", polymer=True, name="ALA"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
     ]
-    residues[2].name = "HEM"
-    residues[0].name = "VAL"
-    residues[1].name = "ALA"
-    structure = FakeStructure(residues)
+    structure = FakeStructure(residues, atomspec="#1")
     session = FakeSession(models=[structure])
 
     cmd.swapasym(session, mode="label")
 
-    info = " ".join(session.logger.info_msgs)
-    assert "added:" in info
-    assert "E [HEM]" in info
+    html = session.logger.html_info_msgs[0]
+    assert "added" in html
+    assert ">HEM<" in html  # residue-type cell
+    assert 'href="cxcmd:select #1/E"' in html
 
 
-def test_info_log_lists_removed_chain_ids_when_swapping_back_to_auth():
-    """Reverse swap: the label-only ids should appear under 'removed'."""
+def test_info_log_removed_row_when_swapping_back_to_auth():
+    """Reverse swap: the label-only ids should appear in a 'removed' row
+    (without a cxcmd link, since the id no longer exists post-swap)."""
     from _fakes import FakeResidue, FakeStructure
 
     residues = [
-        FakeResidue("A", "A", polymer=True),
-        FakeResidue("A", "E", polymer=False),
+        FakeResidue("A", "A", polymer=True, name="VAL"),
+        FakeResidue("A", "E", polymer=False, name="HEM"),
     ]
-    residues[0].name = "VAL"
-    residues[1].name = "HEM"
-    structure = FakeStructure(residues)
+    structure = FakeStructure(residues, atomspec="#1")
     session = FakeSession(models=[structure])
 
     cmd.swapasym(session, mode="label")  # auth -> label
+    session.logger.html_info_msgs.clear()
     session.logger.info_msgs.clear()
     cmd.swapasym(session, mode="auth")  # label -> auth
 
-    info = " ".join(session.logger.info_msgs)
-    assert "removed:" in info
-    assert "E [HEM]" in info
+    html = session.logger.html_info_msgs[0]
+    assert "removed" in html
+    assert ">HEM<" in html
+    # Removed chain_ids are no longer present on the current side, so no link.
+    assert 'href="cxcmd:select #1/E"' not in html
 
 
 def test_multi_structure_all_processed():
