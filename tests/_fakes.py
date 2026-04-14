@@ -76,9 +76,15 @@ class FakeStructure(_AtomicStructure):
     residue chain_ids so the value reflects the current state.
     """
 
-    def __init__(self, residues: list[FakeResidue], name: str = "fake"):
+    def __init__(
+        self,
+        residues: list[FakeResidue],
+        name: str = "fake",
+        atomspec: str = "#1",
+    ):
         self.residues = list(residues)
         self.name = name
+        self.atomspec = atomspec
         # Build one FakeChain per distinct chain_id for all polymer residues.
         polymer_groups: dict[str, list[FakeResidue]] = {}
         for residue in residues:

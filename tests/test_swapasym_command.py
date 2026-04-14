@@ -156,3 +156,37 @@ def test_multi_structure_all_processed():
 
     assert [r.chain_id for r in s1.residues] == ["A", "E"]
     assert [r.chain_id for r in s2.residues] == ["B", "F"]
+
+
+def test_color_option_runs_color_bychain_on_each_target():
+    """With color=True, swapasym runs `color <spec> bychain` covering every
+    affected structure after the swap."""
+    s1 = FakeStructure(residues_from_pairs([("A", "E")]), name="s1", atomspec="#1")
+    s2 = FakeStructure(residues_from_pairs([("B", "F")]), name="s2", atomspec="#2")
+    session = FakeSession(models=[s1, s2])
+
+    cmd.swapasym(session, mode="label", color=True)
+
+    assert cmd.run.call_count == 1
+    args, kwargs = cmd.run.call_args
+    # positional: (session, command_text); kwarg: log=False
+    assert args[0] is session
+    assert args[1] == "color #1 #2 bychain"
+    assert kwargs.get("log") is False
+
+
+def test_color_option_defaults_to_off():
+    """Existing invocations without ``color`` must NOT re-color the scene."""
+    session, _ = _session_with([("A", "E")])
+
+    cmd.swapasym(session, mode="label")
+
+    cmd.run.assert_not_called()
+
+
+def test_color_option_skipped_when_no_targets_match():
+    """No ``color`` command is issued if the swap itself raised (no targets)."""
+    session = FakeSession(models=[])
+    with pytest.raises(cmd.UserError):
+        cmd.swapasym(session, color=True)
+    cmd.run.assert_not_called()
