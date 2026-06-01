@@ -94,12 +94,18 @@ Clone the repository, then from the ChimeraX command line (the input
 field at the bottom of the ChimeraX GUI) run:
 
 ```
+cd /path/to/ChimeraX-SwapAsym
 devel install /path/to/ChimeraX-SwapAsym
 ```
 
 `devel install` builds the wheel if necessary and installs the bundle
 into the running ChimeraX profile. See `help devel` inside ChimeraX for
 the full command reference.
+
+The initial `cd` is important for ChimeraX 1.11.1: when `devel install`
+is run from another working directory, the build may finish without
+placing the wheel under the bundle's `dist/` directory and fail with
+`RuntimeError: Building wheel failed: chimerax_swapasym-0.2.0-py3-none-any.whl`.
 
 ### From a pre-built wheel (ChimeraX command line)
 
@@ -112,7 +118,8 @@ toolshed install /path/to/ChimeraX_SwapAsym-0.2.0-py3-none-any.whl
 Run the same ChimeraX commands without launching the GUI:
 
 ```bash
-ChimeraX --nogui --exit --cmd 'devel install . exit true'
+cd /path/to/ChimeraX-SwapAsym
+ChimeraX --nogui --exit --cmd 'devel install /path/to/ChimeraX-SwapAsym exit true'
 ```
 
 The leading `--exit` guarantees ChimeraX quits even if the install
